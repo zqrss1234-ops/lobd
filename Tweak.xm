@@ -688,8 +688,7 @@
 }
 
 - (void)keepAlivePing {
-    NSLog(@"[عبدالإله] Background keep-alive ping");
-    AudioServicesPlaySystemSound(1103);
+    // Silent keep-alive - no sound, keeps background task active
 }
 
 - (void)stopBackgroundKeepAlive {
