@@ -274,16 +274,6 @@
 
 #pragma mark - Tap Marker
 
-- (void)toggleTapMarker {
-    if (self.tapMarker && self.showMarker) {
-        [self hideTapMarker];
-    } else {
-        [self showTapMarker];
-    }
-    UIButton *btn = (UIButton *)[self.mainPanel viewWithTag:4567];
-    [btn setTitle:self.showMarker ? @"إخفاء" : @"إظهار" forState:UIControlStateNormal];
-}
-
 - (void)showTapMarker {
     if (self.tapMarker) {
         [self.tapMarker removeFromSuperview];
@@ -530,31 +520,7 @@
     [resetCirclesBtn addTarget:self action:@selector(resetAccountCircles) forControlEvents:UIControlEventTouchUpInside];
     [acctBox addSubview:resetCirclesBtn];
 
-    y += 60;
-
-    // Tap marker toggle
-    UIView *markerBox = [[UIView alloc] initWithFrame:CGRectMake(12, y, pw - 24, 30)];
-    markerBox.backgroundColor = BG_CARD;
-    markerBox.layer.cornerRadius = 10;
-    [self.mainPanel addSubview:markerBox];
-
-    UILabel *markerTitle = [[UILabel alloc] initWithFrame:CGRectMake(8, 6, 120, 18)];
-    markerTitle.text = @"🎯 علامة التحديد";
-    markerTitle.textColor = TEXT_PRIMARY;
-    markerTitle.font = [UIFont boldSystemFontOfSize:10];
-    [markerBox addSubview:markerTitle];
-
-    UIButton *markerToggle = [UIButton buttonWithType:UIButtonTypeCustom];
-    markerToggle.frame = CGRectMake(pw - 82, 4, 60, 22);
-    markerToggle.layer.cornerRadius = 11;
-    markerToggle.backgroundColor = PRIMARY_COLOR;
-    [markerToggle setTitle:@"إخفاء" forState:UIControlStateNormal];
-    [markerToggle setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    markerToggle.titleLabel.font = [UIFont boldSystemFontOfSize:9];
-    [markerToggle addTarget:self action:@selector(toggleTapMarker) forControlEvents:UIControlEventTouchUpInside];
-    markerToggle.tag = 4567;
-    [markerBox addSubview:markerToggle];
-    y += 36;
+    y += 50;
 
     // Background keep-alive toggle
     UIView *bgBox = [[UIView alloc] initWithFrame:CGRectMake(12, y, pw - 24, 36)];
@@ -1119,20 +1085,48 @@
 }
 
 - (void)performTapAtPoint:(CGPoint)pt inWindow:(UIWindow *)w {
+    // Temporarily disable marker so hitTest finds the view underneath
+    BOOL wasEnabled = self.tapMarker.userInteractionEnabled;
+    self.tapMarker.userInteractionEnabled = NO;
+
     UIView *target = [w hitTest:pt withEvent:nil];
-    if ([target respondsToSelector:@selector(sendActionsForControlEvents:)]) {
+
+    self.tapMarker.userInteractionEnabled = wasEnabled;
+
+    if ([target isKindOfClass:[UIControl class]]) {
         UIControl *ctrl = (UIControl *)target;
         [ctrl sendActionsForControlEvents:UIControlEventTouchDown];
         [ctrl sendActionsForControlEvents:UIControlEventTouchUpInside];
+    } else {
+        // Try invoking tap gesture recognizers on the target
+        for (UIGestureRecognizer *gr in target.gestureRecognizers) {
+            if ([gr isKindOfClass:[UITapGestureRecognizer class]] && gr.isEnabled) {
+                gr.enabled = NO;
+                gr.enabled = YES; // Force state reset
+                break;
+            }
+        }
+        // Fallback: send touch events directly
+        [target touchesBegan:nil withEvent:nil];
+        [target touchesEnded:nil withEvent:nil];
     }
 }
 
 - (void)performFrozenTapAtPoint:(CGPoint)pt inWindow:(UIWindow *)w {
+    BOOL wasEnabled = self.tapMarker.userInteractionEnabled;
+    self.tapMarker.userInteractionEnabled = NO;
+
     UIView *target = [w hitTest:pt withEvent:nil];
-    if ([target respondsToSelector:@selector(sendActionsForControlEvents:)]) {
+
+    self.tapMarker.userInteractionEnabled = wasEnabled;
+
+    if ([target isKindOfClass:[UIControl class]]) {
         UIControl *ctrl = (UIControl *)target;
         [ctrl sendActionsForControlEvents:UIControlEventTouchDown];
         [ctrl sendActionsForControlEvents:UIControlEventTouchUpInside];
+    } else {
+        [target touchesBegan:nil withEvent:nil];
+        [target touchesEnded:nil withEvent:nil];
     }
 }
 
