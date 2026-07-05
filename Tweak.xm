@@ -203,7 +203,6 @@
     CGFloat circleSize = 24;
     CGFloat spacing = 10;
     NSUInteger count = self.accountCircles.count;
-    CGFloat totalWidth = count * (circleSize + spacing);
 
     // Shift existing circles
     for (int i = 0; i < self.accountCircles.count; i++) {
