@@ -460,13 +460,13 @@ static BOOL IsIOS11OrLater(void) {
     [self.mainPanel addSubview:header];
 
     UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(20, 8, 200, 20)];
-    title.text = @"سوفيت";
+    title.text = @"عبدالإله";
     title.textColor = TEXT_PRIMARY;
     title.font = [UIFont boldSystemFontOfSize:18];
     [header addSubview:title];
 
     UILabel *subtitle = [[UILabel alloc] initWithFrame:CGRectMake(20, 28, 200, 14)];
-    subtitle.text = @"المطور ستيف";
+    subtitle.text = @"عبدالإله";
     subtitle.textColor = [UIColor colorWithWhite:1 alpha:0.7];
     subtitle.font = [UIFont systemFontOfSize:10];
     [header addSubview:subtitle];
