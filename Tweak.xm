@@ -52,10 +52,9 @@
 @property (nonatomic, strong) NSMutableArray *accountCircles;
 @property (nonatomic, strong) UIView *circleContainer;
 
-// Multiple tap markers (all copies move together)
-@property (nonatomic, strong) NSMutableArray *tapMarkers;
-@property (nonatomic, strong) UIView *markerContainer;
-@property (nonatomic, assign) BOOL showMarkers;
+// Single tap marker for positioning
+@property (nonatomic, strong) UIView *tapMarker;
+@property (nonatomic, assign) BOOL showMarker;
 
 // Prediction line layer
 @property (nonatomic, strong) CAShapeLayer *predictionLine;
@@ -84,8 +83,7 @@
         instance.trackedAccounts = [NSMutableArray array];
         instance.accountCircles = [NSMutableArray array];
         instance.isTrackingAccounts = NO;
-        instance.tapMarkers = [NSMutableArray array];
-        instance.showMarkers = NO;
+        instance.showMarker = NO;
         [instance prepareScriptsFolder];
         [instance startUIGuard];
     });
@@ -114,9 +112,9 @@
         [w addSubview:self.circleContainer];
         [w bringSubviewToFront:self.circleContainer];
     }
-    if (self.markerContainer && self.showMarkers && self.markerContainer.superview != w) {
-        [w addSubview:self.markerContainer];
-        [w bringSubviewToFront:self.markerContainer];
+    if (self.tapMarker && self.showMarker && self.tapMarker.superview != w) {
+        [w addSubview:self.tapMarker];
+        [w bringSubviewToFront:self.tapMarker];
     }
 }
 
@@ -270,105 +268,82 @@
     return colors[self.accountCircles.count % colors.count];
 }
 
-#pragma mark - Tap Markers (Multiple Copies)
+#pragma mark - Tap Marker
 
-- (void)toggleTapMarkers {
-    if (self.tapMarkers.count > 0 && self.showMarkers) {
-        [self hideTapMarkers];
+- (void)toggleTapMarker {
+    if (self.tapMarker && self.showMarker) {
+        [self hideTapMarker];
     } else {
         [self showTapMarker];
     }
     UIButton *btn = (UIButton *)[self.mainPanel viewWithTag:4567];
-    [btn setTitle:self.showMarkers ? @"إخفاء" : @"إظهار" forState:UIControlStateNormal];
+    [btn setTitle:self.showMarker ? @"إخفاء" : @"إظهار" forState:UIControlStateNormal];
 }
 
 - (void)showTapMarker {
-    UIWindow *w = [UIApplication sharedApplication].keyWindow;
-    if (!self.markerContainer) {
-        self.markerContainer = [[UIView alloc] initWithFrame:CGRectMake(w.center.x - 30, w.center.y - 30, 200, 60)];
-        self.markerContainer.userInteractionEnabled = YES;
-        self.markerContainer.backgroundColor = [UIColor clearColor];
-        UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handleMarkerContainerPan:)];
-        [self.markerContainer addGestureRecognizer:pan];
-        [w addSubview:self.markerContainer];
+    if (self.tapMarker) {
+        [self.tapMarker removeFromSuperview];
+        self.tapMarker = nil;
     }
-
-    CGFloat size = 32;
-    CGFloat spacing = 8;
-    NSUInteger count = self.tapMarkers.count;
-
-    UIView *marker = [[UIView alloc] initWithFrame:CGRectMake(count * (size + spacing), 0, size, size)];
+    UIWindow *w = [UIApplication sharedApplication].keyWindow;
+    CGFloat size = 40;
+    UIView *marker = [[UIView alloc] initWithFrame:CGRectMake(w.center.x - size/2, w.center.y - size/2, size, size)];
     marker.backgroundColor = [UIColor clearColor];
     marker.layer.cornerRadius = size / 2;
     marker.layer.borderWidth = 2.5;
     marker.layer.borderColor = PRIMARY_COLOR.CGColor;
     marker.layer.shadowColor = [UIColor blackColor].CGColor;
     marker.layer.shadowOffset = CGSizeZero;
-    marker.layer.shadowRadius = 4;
+    marker.layer.shadowRadius = 5;
     marker.layer.shadowOpacity = 0.6;
-    marker.userInteractionEnabled = NO;
+    marker.userInteractionEnabled = YES;
 
     UIView *inner = [[UIView alloc] initWithFrame:CGRectMake(size/2 - 5, size/2 - 5, 10, 10)];
     inner.backgroundColor = PRIMARY_COLOR;
     inner.layer.cornerRadius = 5;
     [marker addSubview:inner];
 
-    UILabel *numLabel = [[UILabel alloc] initWithFrame:CGRectMake(0, 0, size, size)];
-    numLabel.text = [NSString stringWithFormat:@"%lu", (unsigned long)self.tapMarkers.count + 1];
-    numLabel.textColor = [UIColor whiteColor];
-    numLabel.font = [UIFont boldSystemFontOfSize:9];
-    numLabel.textAlignment = NSTextAlignmentCenter;
-    [marker addSubview:numLabel];
+    // Pan gesture for dragging
+    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handleTapMarkerPan:)];
+    [marker addGestureRecognizer:pan];
 
-    [self.markerContainer addSubview:marker];
-    [self.tapMarkers addObject:marker];
-    self.showMarkers = YES;
-
-    CGRect cf = self.markerContainer.frame;
-    cf.size.width = (count + 1) * (size + spacing);
-    cf.size.height = size + 8;
-    self.markerContainer.frame = cf;
+    [w addSubview:marker];
+    self.tapMarker = marker;
+    self.showMarker = YES;
 
     marker.alpha = 0;
-    marker.transform = CGAffineTransformMakeScale(0.3, 0.3);
-    [UIView animateWithDuration:0.3 delay:count * 0.08 usingSpringWithDamping:0.6 initialSpringVelocity:0.8 options:0 animations:^{
+    marker.transform = CGAffineTransformMakeScale(0.5, 0.5);
+    [UIView animateWithDuration:0.3 delay:0 usingSpringWithDamping:0.6 initialSpringVelocity:0.8 options:0 animations:^{
         marker.alpha = 1;
         marker.transform = CGAffineTransformIdentity;
     } completion:nil];
-
-    [self showToast:[NSString stringWithFormat:@"✅ نسخة %lu", (unsigned long)self.tapMarkers.count]];
+    [self showToast:@"✅ ظهرت علامة التحديد"];
 }
 
-- (void)hideTapMarkers {
-    if (!self.markerContainer) return;
+- (void)hideTapMarker {
+    if (!self.tapMarker) return;
     [UIView animateWithDuration:0.2 animations:^{
-        self.markerContainer.alpha = 0;
+        self.tapMarker.alpha = 0;
+        self.tapMarker.transform = CGAffineTransformMakeScale(0.3, 0.3);
     } completion:^(BOOL f) {
-        for (UIView *m in self.tapMarkers) [m removeFromSuperview];
-        [self.tapMarkers removeAllObjects];
-        [self.markerContainer removeFromSuperview];
-        self.markerContainer = nil;
-        self.showMarkers = NO;
+        [self.tapMarker removeFromSuperview];
+        self.tapMarker = nil;
+        self.showMarker = NO;
     }];
-    [self showToast:@"تم إخفاء النسخ"];
+    [self showToast:@"تم إخفاء العلامة"];
 }
 
-- (void)handleMarkerContainerPan:(UIPanGestureRecognizer *)p {
+- (void)handleTapMarkerPan:(UIPanGestureRecognizer *)p {
     UIView *v = p.view;
     CGPoint t = [p translationInView:v.superview];
     v.center = CGPointMake(v.center.x + t.x, v.center.y + t.y);
     [p setTranslation:CGPointZero inView:v.superview];
 }
 
-- (NSArray *)getTapMarkerPoints {
-    if (!self.markerContainer || self.tapMarkers.count == 0) return nil;
+- (CGPoint)tapMarkerPosition {
+    if (!self.tapMarker || !self.showMarker) return CGPointZero;
     UIWindow *w = [UIApplication sharedApplication].keyWindow;
-    NSMutableArray *pts = [NSMutableArray array];
-    for (UIView *m in self.tapMarkers) {
-        CGPoint pt = [m convertPoint:CGPointMake(m.bounds.size.width/2, m.bounds.size.height/2) toView:w];
-        [pts addObject:[NSValue valueWithCGPoint:pt]];
-    }
-    return pts;
+    return [self.tapMarker convertPoint:CGPointMake(self.tapMarker.bounds.size.width/2, self.tapMarker.bounds.size.height/2) toView:w];
 }
 
 #pragma mark - Main Panel
@@ -567,7 +542,7 @@
     [markerToggle setTitle:@"إظهار" forState:UIControlStateNormal];
     [markerToggle setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     markerToggle.titleLabel.font = [UIFont boldSystemFontOfSize:9];
-    [markerToggle addTarget:self action:@selector(toggleTapMarkers) forControlEvents:UIControlEventTouchUpInside];
+    [markerToggle addTarget:self action:@selector(toggleTapMarker) forControlEvents:UIControlEventTouchUpInside];
     markerToggle.tag = 4567;
     [markerBox addSubview:markerToggle];
     y += 36;
@@ -1102,54 +1077,35 @@
 - (void)tapRealTarget {
     if (!self.autoTapEnabled) return;
     UIWindow *w = [UIApplication sharedApplication].keyWindow;
-
-    // Get tap points: Priority 1 = tap markers, 2 = account circles, 3 = targetsArray
-    NSArray *points = [self getTapMarkerPoints];
-    if (!points || points.count == 0) {
+    CGPoint tapPt = [self tapMarkerPosition];
+    BOOL hasMarker = self.tapMarker && self.showMarker;
+    if (!hasMarker) {
         if (self.accountCircles.count > 0 && self.circleContainer) {
-            NSMutableArray *pts = [NSMutableArray array];
             for (UIView *dot in self.accountCircles) {
                 CGPoint pt = [dot convertPoint:CGPointMake(dot.bounds.size.width/2, dot.bounds.size.height/2) toView:w];
-                [pts addObject:[NSValue valueWithCGPoint:pt]];
+                [self performFeatureTapsAtPoint:pt inWindow:w];
             }
-            points = pts;
+            return;
         } else if (self.targetsArray.count > 0) {
-            points = [self getTargetsArrayPoints];
-        }
-    }
-    if (!points || points.count == 0) return;
-
-    // Tap at every point with feature modifiers
-    for (NSValue *val in points) {
-        CGPoint pt = [val CGPointValue];
-        [self performTapAtPoint:pt inWindow:w];
-
-        // feature: فاست اكس (double tap)
-        if (self.goldenShotEnabled) {
-            [self performTapAtPoint:pt inWindow:w];
-        }
-
-        // feature: تقوية تدبيل (hold + extra tap)
-        if (self.freezeLinesEnabled) {
-            [self performFrozenTapAtPoint:pt inWindow:w];
-        }
-
-        // feature: x9 سبيد سرعة (rapid 8 extra taps = 9 total)
-        if (self.antiRecordEnabled) {
-            for (int i = 0; i < 8; i++) {
-                [self performTapAtPoint:pt inWindow:w];
+            for (UIButton *btn in self.targetsArray) {
+                CGPoint pt = [btn convertPoint:CGPointMake(btn.bounds.size.width/2, btn.bounds.size.height/2) toView:nil];
+                [self performFeatureTapsAtPoint:pt inWindow:w];
             }
+            return;
         }
+        return;
     }
+    [self performFeatureTapsAtPoint:tapPt inWindow:w];
+    if (self.autoQueueEnabled) [self tapQueueButtonInWindow:w];
+    if (self.drawPredictionEnabled) [self drawPredictionFromPoint:tapPt inWindow:w];
+}
 
-    // feature: ازلة الصدمة (tap queue/ready button)
-    if (self.autoQueueEnabled) {
-        [self tapQueueButtonInWindow:w];
-    }
-
-    // feature: تقوية الشقه (draw prediction line from first point)
-    if (self.drawPredictionEnabled && points.count > 0) {
-        [self drawPredictionFromPoint:[points.firstObject CGPointValue] inWindow:w];
+- (void)performFeatureTapsAtPoint:(CGPoint)pt inWindow:(UIWindow *)w {
+    [self performTapAtPoint:pt inWindow:w];
+    if (self.goldenShotEnabled) [self performTapAtPoint:pt inWindow:w];
+    if (self.freezeLinesEnabled) [self performFrozenTapAtPoint:pt inWindow:w];
+    if (self.antiRecordEnabled) {
+        for (int i = 0; i < 8; i++) [self performTapAtPoint:pt inWindow:w];
     }
 }
 
@@ -1178,16 +1134,13 @@
 
 - (void)tapQueueButtonInWindow:(UIWindow *)w {
     for (UIView *sub in w.subviews) {
-        if ([sub isKindOfClass:[UIControl class]]) {
-            UIControl *c = (UIControl *)sub;
-            NSString *title = @"";
-            if ([c respondsToSelector:@selector(titleForState:)]) {
-                title = [(UIButton *)c titleForState:UIControlStateNormal] ?: @"";
-            }
+        if ([sub isKindOfClass:[UIButton class]]) {
+            UIButton *btn = (UIButton *)sub;
+            NSString *title = [btn titleForState:UIControlStateNormal] ?: @"";
             if ([title containsString:@"جاهز"] || [title containsString:@"موافق"] ||
                 [title containsString:@"Ready"] || [title containsString:@"OK"] ||
                 [title containsString:@"انضم"] || [title containsString:@"Join"]) {
-                [c sendActionsForControlEvents:UIControlEventTouchUpInside];
+                [btn sendActionsForControlEvents:UIControlEventTouchUpInside];
             }
         }
         [self tapQueueButtonInWindow:sub];
@@ -1217,15 +1170,6 @@
         [self.predictionLine removeFromSuperlayer];
         self.predictionLine = nil;
     });
-}
-
-- (NSArray *)getTargetsArrayPoints {
-    NSMutableArray *pts = [NSMutableArray array];
-    for (UIButton *btn in self.targetsArray) {
-        CGPoint pt = [btn convertPoint:CGPointMake(btn.bounds.size.width/2, btn.bounds.size.height/2) toView:nil];
-        [pts addObject:[NSValue valueWithCGPoint:pt]];
-    }
-    return pts;
 }
 
 #pragma mark - Toast
