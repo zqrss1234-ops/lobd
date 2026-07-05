@@ -1053,23 +1053,7 @@
     if (!self.autoTapEnabled) return;
     UIWindow *w = [UIApplication sharedApplication].keyWindow;
     CGPoint tapPt = [self tapMarkerPosition];
-    BOOL hasMarker = self.tapMarker && self.showMarker;
-    if (!hasMarker) {
-        if (self.accountCircles.count > 0 && self.circleContainer) {
-            for (UIView *dot in self.accountCircles) {
-                CGPoint pt = [dot convertPoint:CGPointMake(dot.bounds.size.width/2, dot.bounds.size.height/2) toView:w];
-                [self performFeatureTapsAtPoint:pt inWindow:w];
-            }
-            return;
-        } else if (self.targetsArray.count > 0) {
-            for (UIButton *btn in self.targetsArray) {
-                CGPoint pt = [btn convertPoint:CGPointMake(btn.bounds.size.width/2, btn.bounds.size.height/2) toView:nil];
-                [self performFeatureTapsAtPoint:pt inWindow:w];
-            }
-            return;
-        }
-        return;
-    }
+    // All accounts tap at the single marker position
     [self performFeatureTapsAtPoint:tapPt inWindow:w];
     if (self.autoQueueEnabled) [self tapQueueButtonInWindow:w];
     if (self.drawPredictionEnabled) [self drawPredictionFromPoint:tapPt inWindow:w];
