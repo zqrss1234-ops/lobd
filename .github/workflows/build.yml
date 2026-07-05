@@ -17,11 +17,7 @@ jobs:
           echo "THEOS=$HOME/theos" >> $GITHUB_ENV
 
       - name: Install ldid
-        run: |
-          git clone https://github.com/opa334/ldid.git
-          cd ldid
-          make -j$(sysctl -n hw.ncpu)
-          sudo cp ldid /usr/local/bin/
+        run: brew install ldid
 
       - name: Build Package
         run: make package
