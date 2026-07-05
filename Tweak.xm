@@ -4,37 +4,20 @@
 #import <AudioToolbox/AudioToolbox.h>
 
 #define PRIMARY_COLOR    [UIColor colorWithRed:0.00 green:0.60 blue:1.00 alpha:1.0]
-#define SUCCESS_COLOR    [UIColor colorWithRed:0.00 green:0.85 blue:0.40 alpha:1.0]
-#define ERROR_COLOR      [UIColor colorWithRed:1.00 green:0.20 blue:0.30 alpha:1.0]
+#define SUCCESS_COLOR    [UIColor colorWithRed:0.00 green:0.50 blue:1.00 alpha:1.0]
+#define ERROR_COLOR      [UIColor colorWithRed:0.80 green:0.20 blue:0.30 alpha:1.0]
 #define BG_DARK          [UIColor colorWithRed:0.05 green:0.05 blue:0.08 alpha:0.95]
 #define BG_CARD          [UIColor colorWithRed:0.10 green:0.10 blue:0.15 alpha:0.90]
 #define TEXT_PRIMARY     [UIColor whiteColor]
 #define TEXT_SECONDARY   [UIColor colorWithRed:0.60 green:0.60 blue:0.70 alpha:1.0]
 #define TURBO_COLOR      [UIColor colorWithRed:1.00 green:0.50 blue:0.00 alpha:1.0]
 
-static NSMutableDictionary *imageCache = nil;
-
-@interface UIImage (Abdulilah)
-+ (UIImage *)imageFromURL:(NSString *)urlString;
-@end
-
-@implementation UIImage (Abdulilah)
-+ (UIImage *)imageFromURL:(NSString *)urlString {
-    if (!imageCache) imageCache = [NSMutableDictionary dictionary];
-    if (imageCache[urlString]) return imageCache[urlString];
-    NSData *data = [NSData dataWithContentsOfURL:[NSURL URLWithString:urlString]];
-    UIImage *img = [UIImage imageWithData:data];
-    if (img) imageCache[urlString] = img;
-    return img;
-}
-@end
-
 @interface AbdulilahManager : NSObject
 
 @property (nonatomic, strong) UIView *mainPanel;
 @property (nonatomic, strong) UIButton *floatButton;
-@property (nonatomic, strong) UIButton *startBtn;
-@property (nonatomic, strong) UIButton *stopBtn;
+@property (nonatomic, strong) UIButton *startTextBtn;
+@property (nonatomic, strong) UIButton *stopTextBtn;
 @property (nonatomic, strong) UISlider *speedSlider;
 @property (nonatomic, strong) UILabel *speedLabel;
 @property (nonatomic, assign) BOOL autoTapEnabled;
@@ -50,12 +33,7 @@ static NSMutableDictionary *imageCache = nil;
 @property (nonatomic, strong) NSMutableArray *savedScripts;
 @property (nonatomic, strong) UIView *scriptsPanel;
 @property (nonatomic, strong) UITableView *scriptsTable;
-@property (nonatomic, strong) UIButton *loopBtn;
-@property (nonatomic, strong) UIButton *stopLoopBtn;
-@property (nonatomic, assign) BOOL infiniteLoopRunning;
-@property (nonatomic, strong) NSArray *infiniteEvents;
 @property (nonatomic, assign) BOOL isDarkMode;
-@property (nonatomic, assign) BOOL isEnglish;
 @property (nonatomic, assign) BOOL isMenuVisible;
 @property (nonatomic, assign) BOOL autoQueueEnabled;
 @property (nonatomic, assign) BOOL goldenShotEnabled;
@@ -72,6 +50,10 @@ static NSMutableDictionary *imageCache = nil;
 @property (nonatomic, strong) UILabel *accountCountLabel;
 @property (nonatomic, assign) BOOL isTrackingAccounts;
 @property (nonatomic, strong) UIButton *mergeButton;
+@property (nonatomic, strong) NSMutableArray *accountCircles;
+
+// Account circle container that moves all circles together
+@property (nonatomic, strong) UIView *circleContainer;
 
 + (instancetype)shared;
 - (void)showFloatingButton;
@@ -80,27 +62,6 @@ static NSMutableDictionary *imageCache = nil;
 - (void)stopBackgroundKeepAlive;
 
 @end
-
-static UIImageView *createIcon(NSString *url, CGRect frame, UIColor *tint) {
-    UIImage *img = [[UIImage imageFromURL:url] imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
-    UIImageView *iv = [[UIImageView alloc] initWithFrame:frame];
-    iv.image = img;
-    iv.tintColor = tint;
-    iv.contentMode = UIViewContentModeScaleAspectFit;
-    return iv;
-}
-
-static UIButton *circularButton(CGRect frame, NSString *url, UIColor *color, SEL action, id target) {
-    UIButton *b = [UIButton buttonWithType:UIButtonTypeCustom];
-    b.frame = frame;
-    b.layer.cornerRadius = frame.size.height / 2;
-    b.clipsToBounds = YES;
-    b.backgroundColor = [UIColor clearColor];
-    UIImageView *iv = createIcon(url, CGRectMake((frame.size.width-32)/2, (frame.size.height-32)/2, 32, 32), color);
-    [b addSubview:iv];
-    [b addTarget:target action:action forControlEvents:UIControlEventTouchUpInside];
-    return b;
-}
 
 @implementation AbdulilahManager
 
@@ -116,6 +77,7 @@ static UIButton *circularButton(CGRect frame, NSString *url, UIColor *color, SEL
         instance.recordedEvents = [NSMutableArray array];
         instance.savedScripts = [NSMutableArray array];
         instance.trackedAccounts = [NSMutableArray array];
+        instance.accountCircles = [NSMutableArray array];
         instance.isTrackingAccounts = NO;
         [instance prepareScriptsFolder];
         [instance startUIGuard];
@@ -141,6 +103,10 @@ static UIButton *circularButton(CGRect frame, NSString *url, UIColor *color, SEL
         }
         [w bringSubviewToFront:self.mainPanel];
     }
+    if (self.circleContainer && self.circleContainer.superview != w) {
+        [w addSubview:self.circleContainer];
+        [w bringSubviewToFront:self.circleContainer];
+    }
 }
 
 - (void)prepareScriptsFolder {
@@ -149,6 +115,8 @@ static UIButton *circularButton(CGRect frame, NSString *url, UIColor *color, SEL
     self.scriptsFolder = [docs stringByAppendingPathComponent:@"Scripts"];
     [[NSFileManager defaultManager] createDirectoryAtPath:self.scriptsFolder withIntermediateDirectories:YES attributes:nil error:nil];
 }
+
+#pragma mark - Floating Button
 
 - (void)showFloatingButton {
     if (self.floatButton) {
@@ -159,17 +127,17 @@ static UIButton *circularButton(CGRect frame, NSString *url, UIColor *color, SEL
     UIView *container = [[UIView alloc] initWithFrame:CGRectMake(20, 150, 52, 52)];
     self.floatButton = [UIButton buttonWithType:UIButtonTypeCustom];
     self.floatButton.frame = CGRectMake(0, 0, 52, 52);
-    self.floatButton.backgroundColor = PRIMARY_COLOR;
+    self.floatButton.backgroundColor = [UIColor blackColor];
     self.floatButton.layer.cornerRadius = 26;
     self.floatButton.clipsToBounds = YES;
     self.floatButton.layer.borderWidth = 2;
-    self.floatButton.layer.borderColor = [UIColor whiteColor].CGColor;
+    self.floatButton.layer.borderColor = PRIMARY_COLOR.CGColor;
     [self.floatButton setTitle:@"ع" forState:UIControlStateNormal];
     self.floatButton.titleLabel.font = [UIFont boldSystemFontOfSize:24];
-    self.floatButton.layer.shadowColor = PRIMARY_COLOR.CGColor;
+    self.floatButton.layer.shadowColor = [UIColor blackColor].CGColor;
     self.floatButton.layer.shadowOffset = CGSizeMake(0, 4);
     self.floatButton.layer.shadowRadius = 10;
-    self.floatButton.layer.shadowOpacity = 0.35;
+    self.floatButton.layer.shadowOpacity = 0.5;
     [self.floatButton addTarget:self action:@selector(handleFloatTap) forControlEvents:UIControlEventTouchUpInside];
     UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
     [self.floatButton addGestureRecognizer:pan];
@@ -210,13 +178,97 @@ static UIButton *circularButton(CGRect frame, NSString *url, UIColor *color, SEL
     }
 }
 
+#pragma mark - Account Circles
+
+- (void)addAccountCircleForAccount:(NSString *)accountID {
+    UIWindow *w = [UIApplication sharedApplication].keyWindow;
+    if (!self.circleContainer) {
+        self.circleContainer = [[UIView alloc] initWithFrame:CGRectMake(100, 300, 200, 200)];
+        self.circleContainer.userInteractionEnabled = YES;
+        self.circleContainer.backgroundColor = [UIColor clearColor];
+        UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handleCircleContainerPan:)];
+        [self.circleContainer addGestureRecognizer:pan];
+        [w addSubview:self.circleContainer];
+    }
+
+    CGFloat circleSize = 24;
+    CGFloat spacing = 10;
+    NSUInteger count = self.accountCircles.count;
+    CGFloat totalWidth = count * (circleSize + spacing);
+
+    // Shift existing circles
+    for (int i = 0; i < self.accountCircles.count; i++) {
+        UIView *dot = self.accountCircles[i];
+        [UIView animateWithDuration:0.3 animations:^{
+            dot.frame = CGRectMake(i * (circleSize + spacing), 0, circleSize, circleSize);
+        }];
+    }
+
+    UIView *dot = [[UIView alloc] initWithFrame:CGRectMake(count * (circleSize + spacing), 0, circleSize, circleSize)];
+    dot.backgroundColor = [self randomColor];
+    dot.layer.cornerRadius = circleSize / 2;
+    dot.layer.borderWidth = 2;
+    dot.layer.borderColor = [UIColor whiteColor].CGColor;
+    dot.layer.shadowColor = [UIColor blackColor].CGColor;
+    dot.layer.shadowOffset = CGSizeZero;
+    dot.layer.shadowRadius = 4;
+    dot.layer.shadowOpacity = 0.5;
+
+    // Label with account number
+    UILabel *numLabel = [[UILabel alloc] initWithFrame:dot.bounds];
+    numLabel.text = [NSString stringWithFormat:@"%lu", (unsigned long)self.accountCircles.count + 1];
+    numLabel.textColor = [UIColor whiteColor];
+    numLabel.font = [UIFont boldSystemFontOfSize:10];
+    numLabel.textAlignment = NSTextAlignmentCenter;
+    [dot addSubview:numLabel];
+
+    [self.circleContainer addSubview:dot];
+    [self.accountCircles addObject:dot];
+
+    // Update container width
+    CGRect cf = self.circleContainer.frame;
+    cf.size.width = (count + 1) * (circleSize + spacing);
+    cf.size.height = circleSize + 10;
+    self.circleContainer.frame = cf;
+
+    // Fade in
+    dot.alpha = 0;
+    dot.transform = CGAffineTransformMakeScale(0.3, 0.3);
+    [UIView animateWithDuration:0.4 delay:count * 0.05 usingSpringWithDamping:0.6 initialSpringVelocity:0.8 options:0 animations:^{
+        dot.alpha = 1;
+        dot.transform = CGAffineTransformIdentity;
+    } completion:nil];
+}
+
+- (void)handleCircleContainerPan:(UIPanGestureRecognizer *)p {
+    UIView *v = p.view;
+    CGPoint t = [p translationInView:v.superview];
+    v.center = CGPointMake(v.center.x + t.x, v.center.y + t.y);
+    [p setTranslation:CGPointZero inView:v.superview];
+}
+
+- (UIColor *)randomColor {
+    NSArray *colors = @[
+        [UIColor colorWithRed:0.00 green:0.80 blue:1.00 alpha:1.0],
+        [UIColor colorWithRed:1.00 green:0.40 blue:0.00 alpha:1.0],
+        [UIColor colorWithRed:0.00 green:0.85 blue:0.40 alpha:1.0],
+        [UIColor colorWithRed:0.90 green:0.10 blue:0.30 alpha:1.0],
+        [UIColor colorWithRed:0.50 green:0.30 blue:0.90 alpha:1.0],
+        [UIColor colorWithRed:1.00 green:0.80 blue:0.00 alpha:1.0],
+        [UIColor colorWithRed:0.00 green:0.50 blue:0.50 alpha:1.0],
+    ];
+    return colors[self.accountCircles.count % colors.count];
+}
+
+#pragma mark - Main Panel
+
 - (void)buildMainPanel {
     if (self.mainPanel) return;
     UIWindow *w = [UIApplication sharedApplication].keyWindow;
-    CGFloat pw = 270, ph = 520;
+    CGFloat pw = 270;
     CGFloat px = (w.bounds.size.width - pw) / 2;
     CGFloat py = 60;
-    self.mainPanel = [[UIView alloc] initWithFrame:CGRectMake(px, py, pw, ph)];
+    self.mainPanel = [[UIView alloc] initWithFrame:CGRectMake(px, py, pw, 480)];
     self.mainPanel.backgroundColor = BG_DARK;
     self.mainPanel.layer.cornerRadius = 20;
     self.mainPanel.clipsToBounds = YES;
@@ -250,20 +302,28 @@ static UIButton *circularButton(CGRect frame, NSString *url, UIColor *color, SEL
 
     CGFloat y = 52;
 
-    // Start/Stop buttons
-    CGFloat btnSize = 80;
-    self.startBtn = circularButton(CGRectMake(20, y, btnSize, btnSize),
-        @"https://cdn-icons-png.flaticon.com/512/0/375.png",
-        SUCCESS_COLOR, @selector(startTap), self);
-    [self.mainPanel addSubview:self.startBtn];
+    // Text-based Start/Stop buttons instead of icon circles
+    self.startTextBtn = [UIButton buttonWithType:UIButtonTypeCustom];
+    self.startTextBtn.frame = CGRectMake(15, y, (pw - 45) / 2, 44);
+    self.startTextBtn.backgroundColor = SUCCESS_COLOR;
+    self.startTextBtn.layer.cornerRadius = 22;
+    [self.startTextBtn setTitle:@"تشغيل" forState:UIControlStateNormal];
+    [self.startTextBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    self.startTextBtn.titleLabel.font = [UIFont boldSystemFontOfSize:16];
+    [self.startTextBtn addTarget:self action:@selector(startTap) forControlEvents:UIControlEventTouchUpInside];
+    [self.mainPanel addSubview:self.startTextBtn];
 
-    CGFloat stopX = pw - 20 - btnSize;
-    self.stopBtn = circularButton(CGRectMake(stopX, y, btnSize, btnSize),
-        @"https://img.icons8.com/?size=100&id=VAUcyT5ZfYFs&format=png&color=000000",
-        ERROR_COLOR, @selector(stopTap), self);
-    [self.mainPanel addSubview:self.stopBtn];
+    self.stopTextBtn = [UIButton buttonWithType:UIButtonTypeCustom];
+    self.stopTextBtn.frame = CGRectMake(pw - 15 - (pw - 45) / 2, y, (pw - 45) / 2, 44);
+    self.stopTextBtn.backgroundColor = ERROR_COLOR;
+    self.stopTextBtn.layer.cornerRadius = 22;
+    [self.stopTextBtn setTitle:@"إيقاف" forState:UIControlStateNormal];
+    [self.stopTextBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    self.stopTextBtn.titleLabel.font = [UIFont boldSystemFontOfSize:16];
+    [self.stopTextBtn addTarget:self action:@selector(stopTap) forControlEvents:UIControlEventTouchUpInside];
+    [self.mainPanel addSubview:self.stopTextBtn];
 
-    y += btnSize + 10;
+    y += 54;
 
     // Speed label
     self.speedLabel = [[UILabel alloc] initWithFrame:CGRectMake(15, y, pw - 30, 20)];
@@ -285,34 +345,50 @@ static UIButton *circularButton(CGRect frame, NSString *url, UIColor *color, SEL
     [self.mainPanel addSubview:self.speedSlider];
     y += 30;
 
-    // Record buttons
-    self.recordBtn = circularButton(CGRectMake(30, y, 55, 55),
-        @"https://img.icons8.com/?size=100&id=69068&format=png&color=000000",
-        TURBO_COLOR, @selector(startRecording), self);
-    [self.mainPanel addSubview:self.recordBtn];
+    // Record buttons (small text style)
+    UIView *recBox = [[UIView alloc] initWithFrame:CGRectMake(15, y, pw - 30, 44)];
+    recBox.backgroundColor = BG_CARD;
+    recBox.layer.cornerRadius = 12;
+    [self.mainPanel addSubview:recBox];
 
-    self.stopRecordBtn = circularButton(CGRectMake(95, y, 55, 55),
-        @"https://img.icons8.com/?size=100&id=VAUcyT5ZfYFs&format=png&color=000000",
-        ERROR_COLOR, @selector(stopRecording), self);
+    self.recordBtn = [UIButton buttonWithType:UIButtonTypeCustom];
+    self.recordBtn.frame = CGRectMake(5, 5, (pw - 50) / 2, 34);
+    self.recordBtn.backgroundColor = PRIMARY_COLOR;
+    self.recordBtn.layer.cornerRadius = 17;
+    [self.recordBtn setTitle:@"تسجيل" forState:UIControlStateNormal];
+    [self.recordBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    self.recordBtn.titleLabel.font = [UIFont boldSystemFontOfSize:12];
+    [self.recordBtn addTarget:self action:@selector(startRecording) forControlEvents:UIControlEventTouchUpInside];
+    [recBox addSubview:self.recordBtn];
+
+    self.stopRecordBtn = [UIButton buttonWithType:UIButtonTypeCustom];
+    self.stopRecordBtn.frame = CGRectMake(5 + (pw - 50) / 2 + 10, 5, (pw - 50) / 2, 34);
+    self.stopRecordBtn.backgroundColor = ERROR_COLOR;
+    self.stopRecordBtn.layer.cornerRadius = 17;
+    [self.stopRecordBtn setTitle:@"حفظ" forState:UIControlStateNormal];
+    [self.stopRecordBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    self.stopRecordBtn.titleLabel.font = [UIFont boldSystemFontOfSize:12];
+    [self.stopRecordBtn addTarget:self action:@selector(stopRecording) forControlEvents:UIControlEventTouchUpInside];
     self.stopRecordBtn.alpha = 0;
-    [self.mainPanel addSubview:self.stopRecordBtn];
+    [recBox addSubview:self.stopRecordBtn];
+    y += 52;
 
     // Scripts button
     UIButton *scriptsBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    scriptsBtn.frame = CGRectMake(160, y + 5, pw - 175, 45);
+    scriptsBtn.frame = CGRectMake(15, y, pw - 30, 36);
     [scriptsBtn setTitle:@"ملفاتي" forState:UIControlStateNormal];
-    scriptsBtn.backgroundColor = [UIColor colorWithRed:0.6 green:0.2 blue:0.8 alpha:1];
+    scriptsBtn.backgroundColor = [UIColor colorWithRed:0.00 green:0.40 blue:0.80 alpha:1];
     scriptsBtn.tintColor = [UIColor whiteColor];
-    scriptsBtn.layer.cornerRadius = 22;
+    scriptsBtn.layer.cornerRadius = 18;
     [scriptsBtn addTarget:self action:@selector(showScriptsManager) forControlEvents:UIControlEventTouchUpInside];
     [self.mainPanel addSubview:scriptsBtn];
-    y += 62;
+    y += 42;
 
     // Features toggle button
     UIButton *featuresBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     featuresBtn.frame = CGRectMake(15, y, pw - 30, 36);
     [featuresBtn setTitle:@"الأدوات" forState:UIControlStateNormal];
-    featuresBtn.backgroundColor = [UIColor colorWithRed:0.9 green:0.3 blue:0.6 alpha:1];
+    featuresBtn.backgroundColor = [UIColor colorWithRed:0.00 green:0.30 blue:0.70 alpha:1];
     featuresBtn.tintColor = [UIColor whiteColor];
     featuresBtn.layer.cornerRadius = 18;
     [featuresBtn addTarget:self action:@selector(showFeaturesWindow) forControlEvents:UIControlEventTouchUpInside];
@@ -320,7 +396,7 @@ static UIButton *circularButton(CGRect frame, NSString *url, UIColor *color, SEL
     y += 42;
 
     // Account tracking section
-    UIView *acctBox = [[UIView alloc] initWithFrame:CGRectMake(15, y, pw - 30, 55)];
+    UIView *acctBox = [[UIView alloc] initWithFrame:CGRectMake(15, y, pw - 30, 65)];
     acctBox.backgroundColor = BG_CARD;
     acctBox.layer.cornerRadius = 12;
     [self.mainPanel addSubview:acctBox];
@@ -331,15 +407,16 @@ static UIButton *circularButton(CGRect frame, NSString *url, UIColor *color, SEL
     acctTitle.font = [UIFont boldSystemFontOfSize:11];
     [acctBox addSubview:acctTitle];
 
-    self.accountCountLabel = [[UILabel alloc] initWithFrame:CGRectMake(10, 25, 120, 20)];
+    self.accountCountLabel = [[UILabel alloc] initWithFrame:CGRectMake(10, 25, 120, 30)];
     self.accountCountLabel.text = [NSString stringWithFormat:@"%lu حساب", (unsigned long)self.trackedAccounts.count];
     self.accountCountLabel.textColor = TEXT_SECONDARY;
     self.accountCountLabel.font = [UIFont systemFontOfSize:10];
+    self.accountCountLabel.numberOfLines = 2;
     [acctBox addSubview:self.accountCountLabel];
 
     UIButton *trackBtn = [UIButton buttonWithType:UIButtonTypeCustom];
-    trackBtn.frame = CGRectMake(130, 8, 55, 40);
-    trackBtn.layer.cornerRadius = 12;
+    trackBtn.frame = CGRectMake(130, 5, 60, 28);
+    trackBtn.layer.cornerRadius = 14;
     trackBtn.backgroundColor = PRIMARY_COLOR;
     [trackBtn setTitle:@"تتبع" forState:UIControlStateNormal];
     [trackBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
@@ -348,15 +425,27 @@ static UIButton *circularButton(CGRect frame, NSString *url, UIColor *color, SEL
     [acctBox addSubview:trackBtn];
 
     self.mergeButton = [UIButton buttonWithType:UIButtonTypeCustom];
-    self.mergeButton.frame = CGRectMake(190, 8, 65, 40);
-    self.mergeButton.layer.cornerRadius = 12;
-    self.mergeButton.backgroundColor = [UIColor colorWithRed:0.8 green:0.4 blue:0.0 alpha:1];
+    self.mergeButton.frame = CGRectMake(195, 5, 60, 28);
+    self.mergeButton.layer.cornerRadius = 14;
+    self.mergeButton.backgroundColor = PRIMARY_COLOR;
     [self.mergeButton setTitle:@"دمج" forState:UIControlStateNormal];
     [self.mergeButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     self.mergeButton.titleLabel.font = [UIFont boldSystemFontOfSize:10];
     [self.mergeButton addTarget:self action:@selector(mergeAccounts) forControlEvents:UIControlEventTouchUpInside];
     [acctBox addSubview:self.mergeButton];
-    y += 62;
+
+    // Reset circles button
+    UIButton *resetCirclesBtn = [UIButton buttonWithType:UIButtonTypeCustom];
+    resetCirclesBtn.frame = CGRectMake(130, 36, 125, 24);
+    resetCirclesBtn.layer.cornerRadius = 12;
+    resetCirclesBtn.backgroundColor = [UIColor blackColor];
+    [resetCirclesBtn setTitle:@"🔄 إعادة الدوائر" forState:UIControlStateNormal];
+    [resetCirclesBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    resetCirclesBtn.titleLabel.font = [UIFont systemFontOfSize:9];
+    [resetCirclesBtn addTarget:self action:@selector(resetAccountCircles) forControlEvents:UIControlEventTouchUpInside];
+    [acctBox addSubview:resetCirclesBtn];
+
+    y += 72;
 
     // Background keep-alive toggle
     UIView *bgBox = [[UIView alloc] initWithFrame:CGRectMake(15, y, pw - 30, 45)];
@@ -392,7 +481,7 @@ static UIButton *circularButton(CGRect frame, NSString *url, UIColor *color, SEL
     [self.mainPanel addSubview:settingsBtn];
     y += 42;
 
-    // Resize panel to fit content
+    // Resize panel
     CGRect f = self.mainPanel.frame;
     f.size.height = y + 10;
     self.mainPanel.frame = f;
@@ -425,6 +514,7 @@ static UIButton *circularButton(CGRect frame, NSString *url, UIColor *color, SEL
                     if (accountID && ![self.trackedAccounts containsObject:accountID]) {
                         [self.trackedAccounts addObject:accountID];
                         self.accountCountLabel.text = [NSString stringWithFormat:@"%lu حساب", (unsigned long)self.trackedAccounts.count];
+                        [self addAccountCircleForAccount:accountID];
                     }
                 }
             });
@@ -462,6 +552,16 @@ static UIButton *circularButton(CGRect frame, NSString *url, UIColor *color, SEL
     return [NSString stringWithFormat:@"account_%lu", (unsigned long)self.trackedAccounts.count];
 }
 
+- (void)resetAccountCircles {
+    for (UIView *dot in self.accountCircles) {
+        [dot removeFromSuperview];
+    }
+    [self.accountCircles removeAllObjects];
+    [self.circleContainer removeFromSuperview];
+    self.circleContainer = nil;
+    [self showToast:@"تم مسح الدوائر"];
+}
+
 - (void)mergeAccounts {
     if (self.trackedAccounts.count < 2) {
         [self showToast:@"تحتاج حسابين على الأقل للدمج"];
@@ -495,7 +595,7 @@ static UIButton *circularButton(CGRect frame, NSString *url, UIColor *color, SEL
 - (void)toggleBackgroundKeepAlive:(UIButton *)sender {
     if (self.bgKeepAliveTimer) {
         [self stopBackgroundKeepAlive];
-        sender.backgroundColor = [UIColor colorWithWhite:0.3 alpha:1];
+        sender.backgroundColor = [UIColor blackColor];
         [sender setTitle:@"OFF" forState:UIControlStateNormal];
     } else {
         [self startBackgroundKeepAlive];
@@ -560,7 +660,7 @@ static UIButton *circularButton(CGRect frame, NSString *url, UIColor *color, SEL
         UIButton *btn = [UIButton buttonWithType:UIButtonTypeSystem];
         btn.frame = CGRectMake(20, 50 + i * 48, 240, 40);
         [btn setTitle:f[@"name"] forState:UIControlStateNormal];
-        btn.backgroundColor = enabled ? [UIColor colorWithRed:0.0 green:0.7 blue:0.3 alpha:1] : [UIColor colorWithWhite:0.3 alpha:1];
+        btn.backgroundColor = enabled ? PRIMARY_COLOR : [UIColor blackColor];
         btn.tintColor = [UIColor whiteColor];
         btn.layer.cornerRadius = 12;
         btn.tag = i + 1;
@@ -568,18 +668,10 @@ static UIButton *circularButton(CGRect frame, NSString *url, UIColor *color, SEL
         [panel addSubview:btn];
     }
 
-    // Transparency
-    UILabel *transLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 290, 240, 20)];
-    transLabel.text = [NSString stringWithFormat:@"الشفافية: %.0f%%", self.transparencyValue * 100];
-    transLabel.textColor = self.isDarkMode ? [UIColor whiteColor] : [UIColor blackColor];
-    transLabel.font = [UIFont systemFontOfSize:12];
-    transLabel.textAlignment = NSTextAlignmentCenter;
-    [panel addSubview:transLabel];
-
     UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     closeBtn.frame = CGRectMake(200, 310, 70, 30);
     [closeBtn setTitle:@"إغلاق" forState:UIControlStateNormal];
-    closeBtn.backgroundColor = [UIColor grayColor];
+    closeBtn.backgroundColor = [UIColor blackColor];
     closeBtn.tintColor = [UIColor whiteColor];
     closeBtn.layer.cornerRadius = 15;
     [closeBtn addTarget:self action:@selector(closePanel:) forControlEvents:UIControlEventTouchUpInside];
@@ -619,7 +711,7 @@ static UIButton *circularButton(CGRect frame, NSString *url, UIColor *color, SEL
     UIButton *themeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     themeBtn.frame = CGRectMake(20, 60, 240, 40);
     [themeBtn setTitle:self.isDarkMode ? @"وضع فاتح" : @"وضع داكن" forState:UIControlStateNormal];
-    themeBtn.backgroundColor = [UIColor colorWithRed:0.3 green:0.3 blue:0.3 alpha:1];
+    themeBtn.backgroundColor = PRIMARY_COLOR;
     themeBtn.tintColor = [UIColor whiteColor];
     themeBtn.layer.cornerRadius = 12;
     [themeBtn addTarget:self action:@selector(toggleTheme) forControlEvents:UIControlEventTouchUpInside];
@@ -628,7 +720,7 @@ static UIButton *circularButton(CGRect frame, NSString *url, UIColor *color, SEL
     UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     closeBtn.frame = CGRectMake(200, 250, 70, 30);
     [closeBtn setTitle:@"إغلاق" forState:UIControlStateNormal];
-    closeBtn.backgroundColor = [UIColor grayColor];
+    closeBtn.backgroundColor = [UIColor blackColor];
     closeBtn.tintColor = [UIColor whiteColor];
     closeBtn.layer.cornerRadius = 15;
     [closeBtn addTarget:self action:@selector(closeSettings) forControlEvents:UIControlEventTouchUpInside];
@@ -677,7 +769,7 @@ static UIButton *circularButton(CGRect frame, NSString *url, UIColor *color, SEL
     UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     closeBtn.frame = CGRectMake(pw - 80, ph - 38, 70, 30);
     [closeBtn setTitle:@"إغلاق" forState:UIControlStateNormal];
-    closeBtn.backgroundColor = [UIColor grayColor];
+    closeBtn.backgroundColor = [UIColor blackColor];
     closeBtn.tintColor = [UIColor whiteColor];
     closeBtn.layer.cornerRadius = 15;
     [closeBtn addTarget:self action:@selector(showScriptsManager) forControlEvents:UIControlEventTouchUpInside];
@@ -935,6 +1027,7 @@ static UIButton *circularButton(CGRect frame, NSString *url, UIColor *color, SEL
         if (uid && ![m.trackedAccounts containsObject:uid]) {
             [m.trackedAccounts addObject:uid];
             m.accountCountLabel.text = [NSString stringWithFormat:@"%lu حساب", (unsigned long)m.trackedAccounts.count];
+            [m addAccountCircleForAccount:uid];
         }
     }
 }
@@ -951,6 +1044,7 @@ static UIButton *circularButton(CGRect frame, NSString *url, UIColor *color, SEL
         if (![m.trackedAccounts containsObject:label]) {
             [m.trackedAccounts addObject:label];
             m.accountCountLabel.text = [NSString stringWithFormat:@"%lu حساب", (unsigned long)m.trackedAccounts.count];
+            [m addAccountCircleForAccount:label];
         }
     }
 }
