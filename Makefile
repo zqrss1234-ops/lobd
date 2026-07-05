@@ -8,6 +8,5 @@ include $(THEOS)/makefiles/common.mk
 TWEAK_NAME = yallatweak
 yallatweak_FILES = Tweak.xm
 yallatweak_CFLAGS = -fobjc-arc
-yallatweak_BUNDLE_FILTER = com.yalla.app
 
 include $(THEOS_MAKE_PATH)/tweak.mk
