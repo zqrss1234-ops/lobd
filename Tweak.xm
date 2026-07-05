@@ -55,6 +55,10 @@
 // Account circle container that moves all circles together
 @property (nonatomic, strong) UIView *circleContainer;
 
+// Dedicated tap marker circle for positioning
+@property (nonatomic, strong) UIView *tapMarker;
+@property (nonatomic, assign) BOOL showMarker;
+
 + (instancetype)shared;
 - (void)showFloatingButton;
 - (void)toggleMenu;
@@ -79,6 +83,7 @@
         instance.trackedAccounts = [NSMutableArray array];
         instance.accountCircles = [NSMutableArray array];
         instance.isTrackingAccounts = NO;
+        instance.showMarker = NO;
         [instance prepareScriptsFolder];
         [instance startUIGuard];
     });
@@ -106,6 +111,10 @@
     if (self.circleContainer && self.circleContainer.superview != w) {
         [w addSubview:self.circleContainer];
         [w bringSubviewToFront:self.circleContainer];
+    }
+    if (self.tapMarker && self.showMarker && self.tapMarker.superview != w) {
+        [w addSubview:self.tapMarker];
+        [w bringSubviewToFront:self.tapMarker];
     }
 }
 
@@ -258,6 +267,87 @@
         [UIColor colorWithRed:0.00 green:0.50 blue:0.50 alpha:1.0],
     ];
     return colors[self.accountCircles.count % colors.count];
+}
+
+#pragma mark - Tap Marker
+
+- (void)toggleTapMarker {
+    if (self.tapMarker && self.showMarker) {
+        [self hideTapMarker];
+    } else {
+        [self showTapMarker];
+    }
+    // Update button text
+    UIButton *btn = (UIButton *)[self.mainPanel viewWithTag:4567];
+    [btn setTitle:self.showMarker ? @"إخفاء" : @"إظهار" forState:UIControlStateNormal];
+}
+
+- (void)showTapMarker {
+    if (self.tapMarker) {
+        [self.tapMarker removeFromSuperview];
+        self.tapMarker = nil;
+    }
+    UIWindow *w = [UIApplication sharedApplication].keyWindow;
+    CGFloat size = 44;
+    UIView *marker = [[UIView alloc] initWithFrame:CGRectMake(w.center.x - size/2, w.center.y - size/2, size, size)];
+    marker.backgroundColor = [UIColor clearColor];
+    marker.layer.cornerRadius = size / 2;
+    marker.layer.borderWidth = 3;
+    marker.layer.borderColor = PRIMARY_COLOR.CGColor;
+    marker.layer.shadowColor = [UIColor blackColor].CGColor;
+    marker.layer.shadowOffset = CGSizeZero;
+    marker.layer.shadowRadius = 6;
+    marker.layer.shadowOpacity = 0.6;
+    marker.tag = 6666;
+    marker.userInteractionEnabled = YES;
+
+    // Center dot
+    UIView *dot = [[UIView alloc] initWithFrame:CGRectMake(size/2 - 4, size/2 - 4, 8, 8)];
+    dot.backgroundColor = PRIMARY_COLOR;
+    dot.layer.cornerRadius = 4;
+    [marker addSubview:dot];
+
+    // Pan gesture for dragging
+    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handleTapMarkerPan:)];
+    [marker addGestureRecognizer:pan];
+
+    // Double-tap to hide
+    UITapGestureRecognizer *dtap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(hideTapMarker)];
+    dtap.numberOfTapsRequired = 2;
+    [marker addGestureRecognizer:dtap];
+
+    [w addSubview:marker];
+    self.tapMarker = marker;
+    self.showMarker = YES;
+
+    marker.alpha = 0;
+    marker.transform = CGAffineTransformMakeScale(0.5, 0.5);
+    [UIView animateWithDuration:0.3 delay:0 usingSpringWithDamping:0.6 initialSpringVelocity:0.8 options:0 animations:^{
+        marker.alpha = 1;
+        marker.transform = CGAffineTransformIdentity;
+    } completion:nil];
+
+    [self showToast:@"✅ ظهرت علامة التحديد"];
+}
+
+- (void)hideTapMarker {
+    if (!self.tapMarker) return;
+    [UIView animateWithDuration:0.2 animations:^{
+        self.tapMarker.alpha = 0;
+        self.tapMarker.transform = CGAffineTransformMakeScale(0.3, 0.3);
+    } completion:^(BOOL f) {
+        [self.tapMarker removeFromSuperview];
+        self.tapMarker = nil;
+        self.showMarker = NO;
+    }];
+    [self showToast:@"تم إخفاء علامة التحديد"];
+}
+
+- (void)handleTapMarkerPan:(UIPanGestureRecognizer *)p {
+    UIView *v = p.view;
+    CGPoint t = [p translationInView:v.superview];
+    v.center = CGPointMake(v.center.x + t.x, v.center.y + t.y);
+    [p setTranslation:CGPointZero inView:v.superview];
 }
 
 #pragma mark - Main Panel
@@ -447,6 +537,30 @@
 
     y += 72;
 
+    // Tap marker toggle
+    UIView *markerBox = [[UIView alloc] initWithFrame:CGRectMake(15, y, pw - 30, 36)];
+    markerBox.backgroundColor = BG_CARD;
+    markerBox.layer.cornerRadius = 12;
+    [self.mainPanel addSubview:markerBox];
+
+    UILabel *markerTitle = [[UILabel alloc] initWithFrame:CGRectMake(10, 8, 150, 20)];
+    markerTitle.text = @"🎯 علامة التحديد";
+    markerTitle.textColor = TEXT_PRIMARY;
+    markerTitle.font = [UIFont boldSystemFontOfSize:11];
+    [markerBox addSubview:markerTitle];
+
+    UIButton *markerToggle = [UIButton buttonWithType:UIButtonTypeCustom];
+    markerToggle.frame = CGRectMake(pw - 100, 4, 70, 28);
+    markerToggle.layer.cornerRadius = 14;
+    markerToggle.backgroundColor = PRIMARY_COLOR;
+    [markerToggle setTitle:@"إظهار" forState:UIControlStateNormal];
+    [markerToggle setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    markerToggle.titleLabel.font = [UIFont boldSystemFontOfSize:10];
+    [markerToggle addTarget:self action:@selector(toggleTapMarker) forControlEvents:UIControlEventTouchUpInside];
+    markerToggle.tag = 4567;
+    [markerBox addSubview:markerToggle];
+    y += 42;
+
     // Background keep-alive toggle
     UIView *bgBox = [[UIView alloc] initWithFrame:CGRectMake(15, y, pw - 30, 45)];
     bgBox.backgroundColor = BG_CARD;
@@ -503,6 +617,7 @@
 
 - (void)startTracking {
     [self showToast:@"بدء تتبع الحسابات..."];
+    __block NSUInteger lastMergeCount = 0;
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         while (self.isTrackingAccounts) {
             dispatch_async(dispatch_get_main_queue(), ^{
@@ -516,6 +631,11 @@
                         self.accountCountLabel.text = [NSString stringWithFormat:@"%lu حساب", (unsigned long)self.trackedAccounts.count];
                         [self addAccountCircleForAccount:accountID];
                     }
+                }
+                // Auto-merge when 2+ accounts detected
+                if (self.trackedAccounts.count >= 2 && self.trackedAccounts.count != lastMergeCount) {
+                    lastMergeCount = self.trackedAccounts.count;
+                    [self performMerge];
                 }
             });
             [NSThread sleepForTimeInterval:3.0];
@@ -567,15 +687,7 @@
         [self showToast:@"تحتاج حسابين على الأقل للدمج"];
         return;
     }
-    [self showToast:[NSString stringWithFormat:@"جاري دمج %lu حسابات...", (unsigned long)self.trackedAccounts.count]];
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"دمج الحسابات"
-        message:[NSString stringWithFormat:@"تم تتبع %lu حساب. هل تريد متابعة الدمج؟", (unsigned long)self.trackedAccounts.count]
-        preferredStyle:UIAlertControllerStyleAlert];
-    [alert addAction:[UIAlertAction actionWithTitle:@"دمج" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
-        [self performMerge];
-    }]];
-    [alert addAction:[UIAlertAction actionWithTitle:@"إلغاء" style:UIAlertActionStyleCancel handler:nil]];
-    [[UIApplication sharedApplication].keyWindow.rootViewController presentViewController:alert animated:YES completion:nil];
+    [self performMerge];
 }
 
 - (void)performMerge {
@@ -967,6 +1079,15 @@
 - (void)tapRealTarget {
     if (!self.autoTapEnabled) return;
     UIWindow *w = [UIApplication sharedApplication].keyWindow;
+    // Priority 1: dedicated tap marker
+    if (self.tapMarker && self.showMarker && self.tapMarker.superview) {
+        CGPoint pt = [self.tapMarker convertPoint:CGPointMake(self.tapMarker.bounds.size.width/2, self.tapMarker.bounds.size.height/2) toView:w];
+        UIControl *target = (UIControl *)[w hitTest:pt withEvent:nil];
+        if ([target respondsToSelector:@selector(sendActionsForControlEvents:)])
+            [target sendActionsForControlEvents:UIControlEventTouchUpInside];
+        return;
+    }
+    // Priority 2: account circles
     if (self.accountCircles.count > 0 && self.circleContainer) {
         for (UIView *dot in self.accountCircles) {
             CGPoint pt = [dot convertPoint:CGPointMake(dot.bounds.size.width/2, dot.bounds.size.height/2) toView:w];
@@ -976,6 +1097,7 @@
         }
         return;
     }
+    // Priority 3: targetsArray fallback
     if (self.targetsArray.count == 0) return;
     for (UIButton *btn in self.targetsArray) {
         CGPoint pt = [btn convertPoint:CGPointMake(btn.bounds.size.width/2, btn.bounds.size.height/2) toView:nil];
