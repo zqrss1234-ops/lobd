@@ -1132,7 +1132,7 @@
     });
 }
 
-- (void)tapQueueButtonInWindow:(UIWindow *)w {
+- (void)tapQueueButtonInWindow:(UIView *)w {
     for (UIView *sub in w.subviews) {
         if ([sub isKindOfClass:[UIButton class]]) {
             UIButton *btn = (UIButton *)sub;
