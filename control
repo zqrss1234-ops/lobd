@@ -1,0 +1,9 @@
+Package: com.abdulilah.yallatweak
+Name: عبدالإله
+Version: 9.2
+Architecture: iphoneos-arm
+Description: 15 Mics + Compact UI + Hide on Capture
+Maintainer: عبدالإله
+Author: عبدالإله
+Section: Tweaks
+Depends: mobilesubstrate (>= 0.9.5000), firmware (>= 7.0)
