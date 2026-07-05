@@ -965,12 +965,23 @@
 }
 
 - (void)tapRealTarget {
-    if (!self.autoTapEnabled || self.targetsArray.count == 0) return;
+    if (!self.autoTapEnabled) return;
+    UIWindow *w = [UIApplication sharedApplication].keyWindow;
+    if (self.accountCircles.count > 0 && self.circleContainer) {
+        for (UIView *dot in self.accountCircles) {
+            CGPoint pt = [dot convertPoint:CGPointMake(dot.bounds.size.width/2, dot.bounds.size.height/2) toView:w];
+            UIControl *target = (UIControl *)[w hitTest:pt withEvent:nil];
+            if ([target respondsToSelector:@selector(sendActionsForControlEvents:)])
+                [target sendActionsForControlEvents:UIControlEventTouchUpInside];
+        }
+        return;
+    }
+    if (self.targetsArray.count == 0) return;
     for (UIButton *btn in self.targetsArray) {
         CGPoint pt = [btn convertPoint:CGPointMake(btn.bounds.size.width/2, btn.bounds.size.height/2) toView:nil];
-        UIControl *target = (UIControl *)[[UIApplication sharedApplication].keyWindow hitTest:pt withEvent:nil];
-        if ([target respondsToSelector:@selector(sendActionsForControlEvents:)])
-            [target sendActionsForControlEvents:UIControlEventTouchUpInside];
+        UIControl *t = (UIControl *)[[UIApplication sharedApplication].keyWindow hitTest:pt withEvent:nil];
+        if ([t respondsToSelector:@selector(sendActionsForControlEvents:)])
+            [t sendActionsForControlEvents:UIControlEventTouchUpInside];
     }
 }
 
