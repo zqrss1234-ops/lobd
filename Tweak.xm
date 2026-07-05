@@ -1125,8 +1125,6 @@
         [ctrl sendActionsForControlEvents:UIControlEventTouchDown];
         [ctrl sendActionsForControlEvents:UIControlEventTouchUpInside];
     }
-    // Fallback: send action via UIApplication
-    [[UIApplication sharedApplication] sendAction:@selector(touchesBegan:withEvent:) to:target from:nil forEvent:nil];
 }
 
 - (void)performFrozenTapAtPoint:(CGPoint)pt inWindow:(UIWindow *)w {
