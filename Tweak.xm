@@ -1091,8 +1091,8 @@
             }
         }
         // Fallback: send touch events directly
-        [target touchesBegan:nil withEvent:nil];
-        [target touchesEnded:nil withEvent:nil];
+        [target touchesBegan:[NSSet set] withEvent:nil];
+        [target touchesEnded:[NSSet set] withEvent:nil];
     }
 }
 
@@ -1109,8 +1109,8 @@
         [ctrl sendActionsForControlEvents:UIControlEventTouchDown];
         [ctrl sendActionsForControlEvents:UIControlEventTouchUpInside];
     } else {
-        [target touchesBegan:nil withEvent:nil];
-        [target touchesEnded:nil withEvent:nil];
+        [target touchesBegan:[NSSet set] withEvent:nil];
+        [target touchesEnded:[NSSet set] withEvent:nil];
     }
 }
 
