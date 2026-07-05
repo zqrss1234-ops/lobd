@@ -38,12 +38,6 @@
 // ==========================================
 
 static NSString *const kPrefsPath  = @"/var/mobile/Library/Preferences/com.عبدالإله.micpositions.plist";
-static NSString *const kLicenseOKKey = @"com.عبدالإله.license.ok";
-static NSString *const kLicenseDeviceKey = @"com.عبدالإله.license.device";
-static NSString *const kLicenseEndpoint = @"https://YOUR_PROJECT_REF.functions.supabase.co/verify-license";
-static NSString *const kSupabaseAnonKey = @"YOUR_SUPABASE_ANON_KEY";
-static NSString *const kToolName = @"عبدالإلهPatch";
-static NSString *const kToolVersion = @"1.0";
 
 // ==========================================
 // MARK: - Yalla Classes
@@ -120,13 +114,6 @@ static NSString *const kToolVersion = @"1.0";
 @property (nonatomic, assign) BOOL isGoldenShotActive;
 @property (nonatomic, assign) BOOL isDrawPredictionActive;
 @property (nonatomic, assign) BOOL isFreezeLinesActive;
-
-// LICENSE SYSTEM
-@property (nonatomic, strong) UIView *licensePanel;
-@property (nonatomic, strong) UITextField *licenseCodeField;
-@property (nonatomic, strong) UILabel *licenseStatusLabel;
-@property (nonatomic, strong) UIButton *licenseSubmitButton;
-@property (nonatomic, assign) BOOL isVerifyingLicense;
 
 + (instancetype)shared;
 @end
@@ -387,8 +374,6 @@ static BOOL IsIOS11OrLater(void) {
 }
 
 - (void)checkUI {
-    if (![self ensureLicenseReady]) return;
-
     UIWindow *w = [UIApplication sharedApplication].keyWindow;
     if (!w) return;
 
@@ -404,198 +389,6 @@ static BOOL IsIOS11OrLater(void) {
         }
         [w bringSubviewToFront:self.mainPanel];
     }
-}
-
-// ---------------------------------------------------------
-// MARK: - License System
-// ---------------------------------------------------------
-
-- (BOOL)isLicenseCached {
-    return [[NSUserDefaults standardUserDefaults] boolForKey:kLicenseOKKey];
-}
-
-- (NSString *)licenseDeviceID {
-    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
-    NSString *deviceID = [defaults stringForKey:kLicenseDeviceKey];
-    if (deviceID.length == 0) {
-        deviceID = [[NSUUID UUID] UUIDString];
-        [defaults setObject:deviceID forKey:kLicenseDeviceKey];
-        [defaults synchronize];
-    }
-    return deviceID;
-}
-
-- (BOOL)isLicenseConfigReady {
-    return ![kLicenseEndpoint containsString:@"YOUR_PROJECT_REF"] &&
-           ![kSupabaseAnonKey containsString:@"YOUR_SUPABASE_ANON_KEY"] &&
-           kLicenseEndpoint.length > 10 &&
-           kSupabaseAnonKey.length > 10;
-}
-
-- (BOOL)ensureLicenseReady {
-    if ([self isLicenseCached]) {
-        if (self.licensePanel) {
-            [self.licensePanel removeFromSuperview];
-            self.licensePanel = nil;
-        }
-        return YES;
-    }
-
-    [self showLicensePanelIfNeeded];
-    return NO;
-}
-
-- (void)showLicensePanelIfNeeded {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        UIWindow *w = [UIApplication sharedApplication].keyWindow;
-        if (!w || self.licensePanel.superview) return;
-
-        self.licensePanel = [[UIView alloc] initWithFrame:w.bounds];
-        self.licensePanel.backgroundColor = [UIColor colorWithRed:0.03 green:0.03 blue:0.05 alpha:0.96];
-        [w addSubview:self.licensePanel];
-
-        CGFloat width = MIN(w.bounds.size.width - 40, 320);
-        UIView *card = [[UIView alloc] initWithFrame:CGRectMake((w.bounds.size.width - width) / 2, 150, width, 245)];
-        card.backgroundColor = BG_DARK;
-        card.layer.cornerRadius = 18;
-        card.layer.borderWidth = 1.0;
-        card.layer.borderColor = [PRIMARY_COLOR colorWithAlphaComponent:0.35].CGColor;
-        AddShadow(card, PRIMARY_COLOR, 12, 0.25);
-        [self.licensePanel addSubview:card];
-
-        UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(18, 18, width - 36, 26)];
-        title.text = @"عبدالإله Login";
-        title.textColor = TEXT_PRIMARY;
-        title.font = [UIFont boldSystemFontOfSize:21];
-        title.textAlignment = NSTextAlignmentCenter;
-        [card addSubview:title];
-
-        UILabel *sub = [[UILabel alloc] initWithFrame:CGRectMake(18, 48, width - 36, 34)];
-        sub.text = @"Enter your activation code";
-        sub.textColor = TEXT_SECONDARY;
-        sub.font = [UIFont systemFontOfSize:13];
-        sub.textAlignment = NSTextAlignmentCenter;
-        [card addSubview:sub];
-
-        self.licenseCodeField = [[UITextField alloc] initWithFrame:CGRectMake(20, 92, width - 40, 44)];
-        self.licenseCodeField.backgroundColor = BG_CARD;
-        self.licenseCodeField.textColor = TEXT_PRIMARY;
-        self.licenseCodeField.tintColor = PRIMARY_COLOR;
-        self.licenseCodeField.placeholder = @"Activation Code";
-        self.licenseCodeField.textAlignment = NSTextAlignmentCenter;
-        self.licenseCodeField.autocapitalizationType = UITextAutocapitalizationTypeAllCharacters;
-        self.licenseCodeField.autocorrectionType = UITextAutocorrectionTypeNo;
-        self.licenseCodeField.layer.cornerRadius = 12;
-        self.licenseCodeField.layer.borderWidth = 1;
-        self.licenseCodeField.layer.borderColor = [PRIMARY_COLOR colorWithAlphaComponent:0.25].CGColor;
-        [card addSubview:self.licenseCodeField];
-
-        self.licenseSubmitButton = [UIButton buttonWithType:UIButtonTypeCustom];
-        self.licenseSubmitButton.frame = CGRectMake(20, 150, width - 40, 42);
-        self.licenseSubmitButton.backgroundColor = PRIMARY_COLOR;
-        self.licenseSubmitButton.layer.cornerRadius = 21;
-        [self.licenseSubmitButton setTitle:@"Activate" forState:UIControlStateNormal];
-        [self.licenseSubmitButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-        self.licenseSubmitButton.titleLabel.font = [UIFont boldSystemFontOfSize:15];
-        [self.licenseSubmitButton addTarget:self action:@selector(verifyLicenseFromPanel) forControlEvents:UIControlEventTouchUpInside];
-        [card addSubview:self.licenseSubmitButton];
-
-        self.licenseStatusLabel = [[UILabel alloc] initWithFrame:CGRectMake(18, 202, width - 36, 28)];
-        self.licenseStatusLabel.textColor = TEXT_SECONDARY;
-        self.licenseStatusLabel.font = [UIFont systemFontOfSize:11];
-        self.licenseStatusLabel.textAlignment = NSTextAlignmentCenter;
-        self.licenseStatusLabel.numberOfLines = 2;
-        self.licenseStatusLabel.text = [self isLicenseConfigReady] ? @"Code is checked online" : @"Set Supabase URL and anon key in Tweak.xm";
-        [card addSubview:self.licenseStatusLabel];
-
-        [w bringSubviewToFront:self.licensePanel];
-        [self.licenseCodeField becomeFirstResponder];
-    });
-}
-
-- (void)setLicenseStatus:(NSString *)status color:(UIColor *)color loading:(BOOL)loading {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        self.licenseStatusLabel.text = status;
-        self.licenseStatusLabel.textColor = color;
-        self.licenseSubmitButton.enabled = !loading;
-        self.licenseSubmitButton.alpha = loading ? 0.65 : 1.0;
-        [self.licenseSubmitButton setTitle:(loading ? @"Checking..." : @"Activate") forState:UIControlStateNormal];
-    });
-}
-
-- (void)verifyLicenseFromPanel {
-    if (self.isVerifyingLicense) return;
-
-    NSString *code = [self.licenseCodeField.text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-    if (code.length == 0) {
-        [self setLicenseStatus:@"Enter a code first" color:ERROR_COLOR loading:NO];
-        return;
-    }
-
-    if (![self isLicenseConfigReady]) {
-        [self setLicenseStatus:@"Supabase config is missing" color:ERROR_COLOR loading:NO];
-        return;
-    }
-
-    self.isVerifyingLicense = YES;
-    [self setLicenseStatus:@"Checking code..." color:PRIMARY_COLOR loading:YES];
-
-    NSDictionary *payload = @{
-        @"code": code,
-        @"device_id": [self licenseDeviceID],
-        @"tool_name": kToolName,
-        @"version": kToolVersion
-    };
-
-    NSError *jsonError = nil;
-    NSData *body = [NSJSONSerialization dataWithJSONObject:payload options:0 error:&jsonError];
-    if (!body || jsonError) {
-        self.isVerifyingLicense = NO;
-        [self setLicenseStatus:@"Could not build request" color:ERROR_COLOR loading:NO];
-        return;
-    }
-
-    NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:kLicenseEndpoint]];
-    request.HTTPMethod = @"POST";
-    request.HTTPBody = body;
-    request.timeoutInterval = 15.0;
-    [request setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
-    [request setValue:[@"Bearer " stringByAppendingString:kSupabaseAnonKey] forHTTPHeaderField:@"Authorization"];
-    [request setValue:kSupabaseAnonKey forHTTPHeaderField:@"apikey"];
-
-    NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:request completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
-        self.isVerifyingLicense = NO;
-
-        if (error || !data) {
-            [self setLicenseStatus:@"Network error, try again" color:ERROR_COLOR loading:NO];
-            return;
-        }
-
-        NSDictionary *result = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
-        if (![result isKindOfClass:[NSDictionary class]]) {
-            [self setLicenseStatus:@"Bad server response" color:ERROR_COLOR loading:NO];
-            return;
-        }
-
-        BOOL success = [result[@"success"] boolValue];
-        NSString *message = [result[@"message"] isKindOfClass:[NSString class]] ? result[@"message"] : nil;
-
-        if (success) {
-            NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
-            [defaults setBool:YES forKey:kLicenseOKKey];
-            [defaults synchronize];
-
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [self setLicenseStatus:@"Activated successfully" color:SUCCESS_COLOR loading:NO];
-                [self.licensePanel removeFromSuperview];
-                self.licensePanel = nil;
-                [self checkUI];
-            });
-        } else {
-            [self setLicenseStatus:(message ?: @"Invalid code") color:ERROR_COLOR loading:NO];
-        }
-    }];
-    [task resume];
 }
 
 // ---------------------------------------------------------
