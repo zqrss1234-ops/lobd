@@ -86,6 +86,10 @@
         instance.showMarker = NO;
         [instance prepareScriptsFolder];
         [instance startUIGuard];
+        // Auto-show marker after window is ready
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            [instance showTapMarker];
+        });
     });
     return instance;
 }
@@ -539,7 +543,7 @@
     markerToggle.frame = CGRectMake(pw - 82, 4, 60, 22);
     markerToggle.layer.cornerRadius = 11;
     markerToggle.backgroundColor = PRIMARY_COLOR;
-    [markerToggle setTitle:@"إظهار" forState:UIControlStateNormal];
+    [markerToggle setTitle:@"إخفاء" forState:UIControlStateNormal];
     [markerToggle setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     markerToggle.titleLabel.font = [UIFont boldSystemFontOfSize:9];
     [markerToggle addTarget:self action:@selector(toggleTapMarker) forControlEvents:UIControlEventTouchUpInside];
