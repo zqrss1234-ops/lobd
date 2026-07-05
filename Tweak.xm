@@ -16,8 +16,7 @@
 
 @property (nonatomic, strong) UIView *mainPanel;
 @property (nonatomic, strong) UIButton *floatButton;
-@property (nonatomic, strong) UIButton *startTextBtn;
-@property (nonatomic, strong) UIButton *stopTextBtn;
+@property (nonatomic, strong) UIButton *toggleBtn;
 @property (nonatomic, strong) UISlider *speedSlider;
 @property (nonatomic, strong) UILabel *speedLabel;
 @property (nonatomic, assign) BOOL autoTapEnabled;
@@ -354,7 +353,7 @@
 - (void)buildMainPanel {
     if (self.mainPanel) return;
     UIWindow *w = [UIApplication sharedApplication].keyWindow;
-    CGFloat pw = 270;
+    CGFloat pw = 220;
     CGFloat px = (w.bounds.size.width - pw) / 2;
     CGFloat py = 60;
     self.mainPanel = [[UIView alloc] initWithFrame:CGRectMake(px, py, pw, 480)];
@@ -368,19 +367,19 @@
     [w addSubview:self.mainPanel];
 
     // Header
-    UIView *header = [[UIView alloc] initWithFrame:CGRectMake(0, 0, pw, 44)];
+    UIView *header = [[UIView alloc] initWithFrame:CGRectMake(0, 0, pw, 36)];
     header.backgroundColor = PRIMARY_COLOR;
     [self.mainPanel addSubview:header];
 
-    UILabel *titleLbl = [[UILabel alloc] initWithFrame:CGRectMake(15, 8, 200, 22)];
+    UILabel *titleLbl = [[UILabel alloc] initWithFrame:CGRectMake(12, 7, 160, 18)];
     titleLbl.text = @"عبدالإله";
     titleLbl.textColor = TEXT_PRIMARY;
-    titleLbl.font = [UIFont boldSystemFontOfSize:18];
+    titleLbl.font = [UIFont boldSystemFontOfSize:15];
     [header addSubview:titleLbl];
 
     UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeCustom];
-    closeBtn.frame = CGRectMake(pw - 38, 7, 30, 30);
-    closeBtn.layer.cornerRadius = 15;
+    closeBtn.frame = CGRectMake(pw - 32, 6, 24, 24);
+    closeBtn.layer.cornerRadius = 12;
     closeBtn.backgroundColor = [ERROR_COLOR colorWithAlphaComponent:0.2];
     [closeBtn setTitle:@"✕" forState:UIControlStateNormal];
     [closeBtn setTitleColor:ERROR_COLOR forState:UIControlStateNormal];
@@ -389,41 +388,31 @@
     UIPanGestureRecognizer *panH = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
     [closeBtn addGestureRecognizer:panH];
 
-    CGFloat y = 52;
+    CGFloat y = 42;
 
-    // Text-based Start/Stop buttons instead of icon circles
-    self.startTextBtn = [UIButton buttonWithType:UIButtonTypeCustom];
-    self.startTextBtn.frame = CGRectMake(15, y, (pw - 45) / 2, 44);
-    self.startTextBtn.backgroundColor = SUCCESS_COLOR;
-    self.startTextBtn.layer.cornerRadius = 22;
-    [self.startTextBtn setTitle:@"تشغيل" forState:UIControlStateNormal];
-    [self.startTextBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    self.startTextBtn.titleLabel.font = [UIFont boldSystemFontOfSize:16];
-    [self.startTextBtn addTarget:self action:@selector(startTap) forControlEvents:UIControlEventTouchUpInside];
-    [self.mainPanel addSubview:self.startTextBtn];
+    // Single toggle button: تشغيل / إيقاف
+    self.toggleBtn = [UIButton buttonWithType:UIButtonTypeCustom];
+    self.toggleBtn.frame = CGRectMake(12, y, pw - 24, 38);
+    self.toggleBtn.backgroundColor = SUCCESS_COLOR;
+    self.toggleBtn.layer.cornerRadius = 19;
+    [self.toggleBtn setTitle:@"تشغيل" forState:UIControlStateNormal];
+    [self.toggleBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    self.toggleBtn.titleLabel.font = [UIFont boldSystemFontOfSize:15];
+    [self.toggleBtn addTarget:self action:@selector(toggleStartStop) forControlEvents:UIControlEventTouchUpInside];
+    [self.mainPanel addSubview:self.toggleBtn];
 
-    self.stopTextBtn = [UIButton buttonWithType:UIButtonTypeCustom];
-    self.stopTextBtn.frame = CGRectMake(pw - 15 - (pw - 45) / 2, y, (pw - 45) / 2, 44);
-    self.stopTextBtn.backgroundColor = ERROR_COLOR;
-    self.stopTextBtn.layer.cornerRadius = 22;
-    [self.stopTextBtn setTitle:@"إيقاف" forState:UIControlStateNormal];
-    [self.stopTextBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    self.stopTextBtn.titleLabel.font = [UIFont boldSystemFontOfSize:16];
-    [self.stopTextBtn addTarget:self action:@selector(stopTap) forControlEvents:UIControlEventTouchUpInside];
-    [self.mainPanel addSubview:self.stopTextBtn];
-
-    y += 54;
+    y += 44;
 
     // Speed label
-    self.speedLabel = [[UILabel alloc] initWithFrame:CGRectMake(15, y, pw - 30, 20)];
+    self.speedLabel = [[UILabel alloc] initWithFrame:CGRectMake(12, y, pw - 24, 16)];
     self.speedLabel.text = [NSString stringWithFormat:@"السرعة: %.3f ث", self.currentSpeed];
     self.speedLabel.textColor = TEXT_PRIMARY;
-    self.speedLabel.font = [UIFont systemFontOfSize:12];
+    self.speedLabel.font = [UIFont systemFontOfSize:10];
     [self.mainPanel addSubview:self.speedLabel];
-    y += 22;
+    y += 18;
 
     // Speed slider
-    self.speedSlider = [[UISlider alloc] initWithFrame:CGRectMake(15, y, pw - 30, 24)];
+    self.speedSlider = [[UISlider alloc] initWithFrame:CGRectMake(12, y, pw - 24, 20)];
     self.speedSlider.minimumValue = 0.001f;
     self.speedSlider.maximumValue = 0.1f;
     self.speedSlider.value = self.currentSpeed;
@@ -432,167 +421,167 @@
     self.speedSlider.maximumTrackTintColor = [UIColor colorWithWhite:0.3 alpha:1];
     [self.speedSlider addTarget:self action:@selector(sliderChanged:) forControlEvents:UIControlEventValueChanged];
     [self.mainPanel addSubview:self.speedSlider];
-    y += 30;
+    y += 24;
 
-    // Record buttons (small text style)
-    UIView *recBox = [[UIView alloc] initWithFrame:CGRectMake(15, y, pw - 30, 44)];
+    // Record buttons
+    UIView *recBox = [[UIView alloc] initWithFrame:CGRectMake(12, y, pw - 24, 38)];
     recBox.backgroundColor = BG_CARD;
-    recBox.layer.cornerRadius = 12;
+    recBox.layer.cornerRadius = 10;
     [self.mainPanel addSubview:recBox];
 
     self.recordBtn = [UIButton buttonWithType:UIButtonTypeCustom];
-    self.recordBtn.frame = CGRectMake(5, 5, (pw - 50) / 2, 34);
+    self.recordBtn.frame = CGRectMake(4, 4, (pw - 42) / 2, 30);
     self.recordBtn.backgroundColor = PRIMARY_COLOR;
-    self.recordBtn.layer.cornerRadius = 17;
+    self.recordBtn.layer.cornerRadius = 15;
     [self.recordBtn setTitle:@"تسجيل" forState:UIControlStateNormal];
     [self.recordBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    self.recordBtn.titleLabel.font = [UIFont boldSystemFontOfSize:12];
+    self.recordBtn.titleLabel.font = [UIFont boldSystemFontOfSize:11];
     [self.recordBtn addTarget:self action:@selector(startRecording) forControlEvents:UIControlEventTouchUpInside];
     [recBox addSubview:self.recordBtn];
 
     self.stopRecordBtn = [UIButton buttonWithType:UIButtonTypeCustom];
-    self.stopRecordBtn.frame = CGRectMake(5 + (pw - 50) / 2 + 10, 5, (pw - 50) / 2, 34);
+    self.stopRecordBtn.frame = CGRectMake(4 + (pw - 42) / 2 + 8, 4, (pw - 42) / 2, 30);
     self.stopRecordBtn.backgroundColor = ERROR_COLOR;
-    self.stopRecordBtn.layer.cornerRadius = 17;
+    self.stopRecordBtn.layer.cornerRadius = 15;
     [self.stopRecordBtn setTitle:@"حفظ" forState:UIControlStateNormal];
     [self.stopRecordBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    self.stopRecordBtn.titleLabel.font = [UIFont boldSystemFontOfSize:12];
+    self.stopRecordBtn.titleLabel.font = [UIFont boldSystemFontOfSize:11];
     [self.stopRecordBtn addTarget:self action:@selector(stopRecording) forControlEvents:UIControlEventTouchUpInside];
     self.stopRecordBtn.alpha = 0;
     [recBox addSubview:self.stopRecordBtn];
-    y += 52;
+    y += 44;
 
     // Scripts button
     UIButton *scriptsBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    scriptsBtn.frame = CGRectMake(15, y, pw - 30, 36);
+    scriptsBtn.frame = CGRectMake(12, y, pw - 24, 30);
     [scriptsBtn setTitle:@"ملفاتي" forState:UIControlStateNormal];
     scriptsBtn.backgroundColor = [UIColor colorWithRed:0.00 green:0.40 blue:0.80 alpha:1];
     scriptsBtn.tintColor = [UIColor whiteColor];
-    scriptsBtn.layer.cornerRadius = 18;
+    scriptsBtn.layer.cornerRadius = 15;
     [scriptsBtn addTarget:self action:@selector(showScriptsManager) forControlEvents:UIControlEventTouchUpInside];
     [self.mainPanel addSubview:scriptsBtn];
-    y += 42;
+    y += 34;
 
     // Features toggle button
     UIButton *featuresBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    featuresBtn.frame = CGRectMake(15, y, pw - 30, 36);
+    featuresBtn.frame = CGRectMake(12, y, pw - 24, 30);
     [featuresBtn setTitle:@"الأدوات" forState:UIControlStateNormal];
     featuresBtn.backgroundColor = [UIColor colorWithRed:0.00 green:0.30 blue:0.70 alpha:1];
     featuresBtn.tintColor = [UIColor whiteColor];
-    featuresBtn.layer.cornerRadius = 18;
+    featuresBtn.layer.cornerRadius = 15;
     [featuresBtn addTarget:self action:@selector(showFeaturesWindow) forControlEvents:UIControlEventTouchUpInside];
     [self.mainPanel addSubview:featuresBtn];
-    y += 42;
+    y += 34;
 
     // Account tracking section
-    UIView *acctBox = [[UIView alloc] initWithFrame:CGRectMake(15, y, pw - 30, 65)];
+    UIView *acctBox = [[UIView alloc] initWithFrame:CGRectMake(12, y, pw - 24, 56)];
     acctBox.backgroundColor = BG_CARD;
-    acctBox.layer.cornerRadius = 12;
+    acctBox.layer.cornerRadius = 10;
     [self.mainPanel addSubview:acctBox];
 
-    UILabel *acctTitle = [[UILabel alloc] initWithFrame:CGRectMake(10, 5, 120, 20)];
+    UILabel *acctTitle = [[UILabel alloc] initWithFrame:CGRectMake(8, 4, 100, 16)];
     acctTitle.text = @"👤 تتبع الحسابات";
     acctTitle.textColor = TEXT_PRIMARY;
-    acctTitle.font = [UIFont boldSystemFontOfSize:11];
+    acctTitle.font = [UIFont boldSystemFontOfSize:10];
     [acctBox addSubview:acctTitle];
 
-    self.accountCountLabel = [[UILabel alloc] initWithFrame:CGRectMake(10, 25, 120, 30)];
+    self.accountCountLabel = [[UILabel alloc] initWithFrame:CGRectMake(8, 20, 100, 24)];
     self.accountCountLabel.text = [NSString stringWithFormat:@"%lu حساب", (unsigned long)self.trackedAccounts.count];
     self.accountCountLabel.textColor = TEXT_SECONDARY;
-    self.accountCountLabel.font = [UIFont systemFontOfSize:10];
+    self.accountCountLabel.font = [UIFont systemFontOfSize:9];
     self.accountCountLabel.numberOfLines = 2;
     [acctBox addSubview:self.accountCountLabel];
 
     UIButton *trackBtn = [UIButton buttonWithType:UIButtonTypeCustom];
-    trackBtn.frame = CGRectMake(130, 5, 60, 28);
-    trackBtn.layer.cornerRadius = 14;
+    trackBtn.frame = CGRectMake(108, 4, 48, 22);
+    trackBtn.layer.cornerRadius = 11;
     trackBtn.backgroundColor = PRIMARY_COLOR;
     [trackBtn setTitle:@"تتبع" forState:UIControlStateNormal];
     [trackBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    trackBtn.titleLabel.font = [UIFont boldSystemFontOfSize:10];
+    trackBtn.titleLabel.font = [UIFont boldSystemFontOfSize:9];
     [trackBtn addTarget:self action:@selector(toggleAccountTracking) forControlEvents:UIControlEventTouchUpInside];
     [acctBox addSubview:trackBtn];
 
     self.mergeButton = [UIButton buttonWithType:UIButtonTypeCustom];
-    self.mergeButton.frame = CGRectMake(195, 5, 60, 28);
-    self.mergeButton.layer.cornerRadius = 14;
+    self.mergeButton.frame = CGRectMake(160, 4, 48, 22);
+    self.mergeButton.layer.cornerRadius = 11;
     self.mergeButton.backgroundColor = PRIMARY_COLOR;
     [self.mergeButton setTitle:@"دمج" forState:UIControlStateNormal];
     [self.mergeButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    self.mergeButton.titleLabel.font = [UIFont boldSystemFontOfSize:10];
+    self.mergeButton.titleLabel.font = [UIFont boldSystemFontOfSize:9];
     [self.mergeButton addTarget:self action:@selector(mergeAccounts) forControlEvents:UIControlEventTouchUpInside];
     [acctBox addSubview:self.mergeButton];
 
     // Reset circles button
     UIButton *resetCirclesBtn = [UIButton buttonWithType:UIButtonTypeCustom];
-    resetCirclesBtn.frame = CGRectMake(130, 36, 125, 24);
-    resetCirclesBtn.layer.cornerRadius = 12;
+    resetCirclesBtn.frame = CGRectMake(108, 30, 100, 20);
+    resetCirclesBtn.layer.cornerRadius = 10;
     resetCirclesBtn.backgroundColor = [UIColor blackColor];
-    [resetCirclesBtn setTitle:@"🔄 إعادة الدوائر" forState:UIControlStateNormal];
+    [resetCirclesBtn setTitle:@"🔄 إعادة" forState:UIControlStateNormal];
     [resetCirclesBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    resetCirclesBtn.titleLabel.font = [UIFont systemFontOfSize:9];
+    resetCirclesBtn.titleLabel.font = [UIFont systemFontOfSize:8];
     [resetCirclesBtn addTarget:self action:@selector(resetAccountCircles) forControlEvents:UIControlEventTouchUpInside];
     [acctBox addSubview:resetCirclesBtn];
 
-    y += 72;
+    y += 60;
 
     // Tap marker toggle
-    UIView *markerBox = [[UIView alloc] initWithFrame:CGRectMake(15, y, pw - 30, 36)];
+    UIView *markerBox = [[UIView alloc] initWithFrame:CGRectMake(12, y, pw - 24, 30)];
     markerBox.backgroundColor = BG_CARD;
-    markerBox.layer.cornerRadius = 12;
+    markerBox.layer.cornerRadius = 10;
     [self.mainPanel addSubview:markerBox];
 
-    UILabel *markerTitle = [[UILabel alloc] initWithFrame:CGRectMake(10, 8, 150, 20)];
+    UILabel *markerTitle = [[UILabel alloc] initWithFrame:CGRectMake(8, 6, 120, 18)];
     markerTitle.text = @"🎯 علامة التحديد";
     markerTitle.textColor = TEXT_PRIMARY;
-    markerTitle.font = [UIFont boldSystemFontOfSize:11];
+    markerTitle.font = [UIFont boldSystemFontOfSize:10];
     [markerBox addSubview:markerTitle];
 
     UIButton *markerToggle = [UIButton buttonWithType:UIButtonTypeCustom];
-    markerToggle.frame = CGRectMake(pw - 100, 4, 70, 28);
-    markerToggle.layer.cornerRadius = 14;
+    markerToggle.frame = CGRectMake(pw - 82, 4, 60, 22);
+    markerToggle.layer.cornerRadius = 11;
     markerToggle.backgroundColor = PRIMARY_COLOR;
     [markerToggle setTitle:@"إظهار" forState:UIControlStateNormal];
     [markerToggle setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    markerToggle.titleLabel.font = [UIFont boldSystemFontOfSize:10];
+    markerToggle.titleLabel.font = [UIFont boldSystemFontOfSize:9];
     [markerToggle addTarget:self action:@selector(toggleTapMarker) forControlEvents:UIControlEventTouchUpInside];
     markerToggle.tag = 4567;
     [markerBox addSubview:markerToggle];
-    y += 42;
+    y += 36;
 
     // Background keep-alive toggle
-    UIView *bgBox = [[UIView alloc] initWithFrame:CGRectMake(15, y, pw - 30, 45)];
+    UIView *bgBox = [[UIView alloc] initWithFrame:CGRectMake(12, y, pw - 24, 36)];
     bgBox.backgroundColor = BG_CARD;
-    bgBox.layer.cornerRadius = 12;
+    bgBox.layer.cornerRadius = 10;
     [self.mainPanel addSubview:bgBox];
 
-    UILabel *bgTitle = [[UILabel alloc] initWithFrame:CGRectMake(10, 12, 150, 20)];
+    UILabel *bgTitle = [[UILabel alloc] initWithFrame:CGRectMake(8, 9, 120, 18)];
     bgTitle.text = @"🔋 البقاء في الخلفية";
     bgTitle.textColor = TEXT_PRIMARY;
-    bgTitle.font = [UIFont boldSystemFontOfSize:11];
+    bgTitle.font = [UIFont boldSystemFontOfSize:10];
     [bgBox addSubview:bgTitle];
 
     UIButton *bgToggle = [UIButton buttonWithType:UIButtonTypeCustom];
-    bgToggle.frame = CGRectMake(pw - 100, 7, 70, 30);
-    bgToggle.layer.cornerRadius = 15;
+    bgToggle.frame = CGRectMake(pw - 80, 4, 60, 28);
+    bgToggle.layer.cornerRadius = 14;
     bgToggle.backgroundColor = SUCCESS_COLOR;
     [bgToggle setTitle:@"ON" forState:UIControlStateNormal];
     [bgToggle setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    bgToggle.titleLabel.font = [UIFont boldSystemFontOfSize:12];
+    bgToggle.titleLabel.font = [UIFont boldSystemFontOfSize:11];
     [bgToggle addTarget:self action:@selector(toggleBackgroundKeepAlive:) forControlEvents:UIControlEventTouchUpInside];
     [bgBox addSubview:bgToggle];
-    y += 52;
+    y += 42;
 
     // Settings button
     UIButton *settingsBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    settingsBtn.frame = CGRectMake(15, y, pw - 30, 36);
+    settingsBtn.frame = CGRectMake(12, y, pw - 24, 30);
     [settingsBtn setTitle:@"الإعدادات" forState:UIControlStateNormal];
     settingsBtn.backgroundColor = [UIColor colorWithRed:0.2 green:0.5 blue:0.8 alpha:1];
     settingsBtn.tintColor = [UIColor whiteColor];
-    settingsBtn.layer.cornerRadius = 18;
+    settingsBtn.layer.cornerRadius = 15;
     [settingsBtn addTarget:self action:@selector(showSettingsWindow) forControlEvents:UIControlEventTouchUpInside];
     [self.mainPanel addSubview:settingsBtn];
-    y += 42;
+    y += 34;
 
     // Resize panel
     CGRect f = self.mainPanel.frame;
@@ -1053,9 +1042,19 @@
     });
 }
 
+- (void)toggleStartStop {
+    if (self.autoTapEnabled) {
+        [self stopTap];
+    } else {
+        [self startTap];
+    }
+}
+
 - (void)startTap {
     if (self.autoTapEnabled) return;
     [self startTapWithSpeed:self.currentSpeed];
+    [self.toggleBtn setTitle:@"إيقاف" forState:UIControlStateNormal];
+    self.toggleBtn.backgroundColor = ERROR_COLOR;
 }
 
 - (void)startTapWithSpeed:(float)speed {
@@ -1073,6 +1072,8 @@
 
 - (void)stopTap {
     self.autoTapEnabled = NO;
+    [self.toggleBtn setTitle:@"تشغيل" forState:UIControlStateNormal];
+    self.toggleBtn.backgroundColor = SUCCESS_COLOR;
 }
 
 - (void)tapRealTarget {
