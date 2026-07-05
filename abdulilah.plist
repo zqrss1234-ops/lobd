@@ -6,7 +6,7 @@
     <dict>
         <key>Bundles</key>
         <array>
-            <string>com.yalla.app</string>
+            <string>com.yalla.yallalite</string>
         </array>
     </dict>
 </dict>

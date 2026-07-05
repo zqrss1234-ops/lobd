@@ -1,8 +1,8 @@
-Package: com.abdulilah.yallatweak
+Package: com.abdulilah.yallalite
 Name: عبدالإله
-Version: 9.2
+Version: 1.0
 Architecture: iphoneos-arm
-Description: 15 Mics + Compact UI + Hide on Capture
+Description: عبدالإله - أدوات متكاملة لـ YallaLite مع تتبع ودمج الحسابات
 Maintainer: عبدالإله
 Author: عبدالإله
 Section: Tweaks
