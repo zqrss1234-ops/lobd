@@ -290,7 +290,7 @@
         self.tapMarker = nil;
     }
     UIWindow *w = [UIApplication sharedApplication].keyWindow;
-    CGFloat size = 40;
+    CGFloat size = 48;
     UIView *marker = [[UIView alloc] initWithFrame:CGRectMake(w.center.x - size/2, w.center.y - size/2, size, size)];
     marker.backgroundColor = [UIColor clearColor];
     marker.layer.cornerRadius = size / 2;
@@ -302,10 +302,15 @@
     marker.layer.shadowOpacity = 0.6;
     marker.userInteractionEnabled = YES;
 
-    UIView *inner = [[UIView alloc] initWithFrame:CGRectMake(size/2 - 5, size/2 - 5, 10, 10)];
-    inner.backgroundColor = PRIMARY_COLOR;
-    inner.layer.cornerRadius = 5;
-    [marker addSubview:inner];
+    UILabel *impLabel = [[UILabel alloc] initWithFrame:marker.bounds];
+    impLabel.text = @"impossible";
+    impLabel.textColor = PRIMARY_COLOR;
+    impLabel.font = [UIFont boldSystemFontOfSize:7];
+    impLabel.textAlignment = NSTextAlignmentCenter;
+    impLabel.numberOfLines = 1;
+    impLabel.adjustsFontSizeToFitWidth = YES;
+    impLabel.minimumScaleFactor = 0.5;
+    [marker addSubview:impLabel];
 
     // Pan gesture for dragging
     UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handleTapMarkerPan:)];
@@ -321,7 +326,7 @@
         marker.alpha = 1;
         marker.transform = CGAffineTransformIdentity;
     } completion:nil];
-    [self showToast:@"✅ ظهرت علامة التحديد"];
+    [self showToast:@"✅ ظهرت علامة impossible"];
 }
 
 - (void)hideTapMarker {
@@ -1114,26 +1119,23 @@
 }
 
 - (void)performTapAtPoint:(CGPoint)pt inWindow:(UIWindow *)w {
-    UIControl *target = (UIControl *)[w hitTest:pt withEvent:nil];
+    UIView *target = [w hitTest:pt withEvent:nil];
     if ([target respondsToSelector:@selector(sendActionsForControlEvents:)]) {
-        [target sendActionsForControlEvents:UIControlEventTouchDown];
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.03 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            [target sendActionsForControlEvents:UIControlEventTouchUpInside];
-        });
+        UIControl *ctrl = (UIControl *)target;
+        [ctrl sendActionsForControlEvents:UIControlEventTouchDown];
+        [ctrl sendActionsForControlEvents:UIControlEventTouchUpInside];
     }
+    // Fallback: send action via UIApplication
+    [[UIApplication sharedApplication] sendAction:@selector(touchesBegan:withEvent:) to:target from:nil forEvent:nil];
 }
 
 - (void)performFrozenTapAtPoint:(CGPoint)pt inWindow:(UIWindow *)w {
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        UIControl *target = (UIControl *)[w hitTest:pt withEvent:nil];
-        if ([target respondsToSelector:@selector(sendActionsForControlEvents:)])
-            [target sendActionsForControlEvents:UIControlEventTouchDown];
-    });
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        UIControl *target = (UIControl *)[w hitTest:pt withEvent:nil];
-        if ([target respondsToSelector:@selector(sendActionsForControlEvents:)])
-            [target sendActionsForControlEvents:UIControlEventTouchUpInside];
-    });
+    UIView *target = [w hitTest:pt withEvent:nil];
+    if ([target respondsToSelector:@selector(sendActionsForControlEvents:)]) {
+        UIControl *ctrl = (UIControl *)target;
+        [ctrl sendActionsForControlEvents:UIControlEventTouchDown];
+        [ctrl sendActionsForControlEvents:UIControlEventTouchUpInside];
+    }
 }
 
 - (void)tapQueueButtonInWindow:(UIView *)w {
