@@ -6,9 +6,8 @@
 #define NOTIFY_MOVE    "com.abdulilah.circleMoved"
 #define NOTIFY_START   "com.abdulilah.tapStarted"
 #define NOTIFY_STOP    "com.abdulilah.tapStopped"
-#define SHARED_PATH    @"/var/mobile/Library/Preferences/com.abdulilah.shared.plist"
 
-static void markerMovedCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo);
+static void allNotificationsCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo);
 static void tapStartedCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo);
 static void tapStoppedCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo);
 
@@ -73,6 +72,7 @@ static void tapStoppedCallback(CFNotificationCenterRef center, void *observer, C
 - (void)toggleMenu;
 - (void)startBackgroundKeepAlive;
 - (void)stopBackgroundKeepAlive;
+- (void)applyMarkerPositionFromNotificationName:(NSString *)name;
 
 @end
 
@@ -95,8 +95,8 @@ static void tapStoppedCallback(CFNotificationCenterRef center, void *observer, C
         instance.showMarker = NO;
         [instance prepareScriptsFolder];
         [instance startUIGuard];
-        // Register for cross-instance notifications
-        CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), (__bridge const void *)(instance), markerMovedCallback, CFSTR(NOTIFY_MOVE), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+        // Register for cross-instance notifications (NULL name = all Darwin notifications)
+        CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), (__bridge const void *)(instance), allNotificationsCallback, NULL, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), (__bridge const void *)(instance), tapStartedCallback, CFSTR(NOTIFY_START), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), (__bridge const void *)(instance), tapStoppedCallback, CFSTR(NOTIFY_STOP), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
         // Auto-show marker after window is ready
@@ -329,8 +329,6 @@ static void tapStoppedCallback(CFNotificationCenterRef center, void *observer, C
         marker.alpha = 1;
         marker.transform = CGAffineTransformIdentity;
     } completion:nil];
-    // Load saved position from other instances
-    [self loadSharedMarkerPosition];
 }
 
 - (void)hideTapMarker {
@@ -352,34 +350,24 @@ static void tapStoppedCallback(CFNotificationCenterRef center, void *observer, C
     v.center = CGPointMake(v.center.x + t.x, v.center.y + t.y);
     [p setTranslation:CGPointZero inView:v.superview];
     if (p.state == UIGestureRecognizerStateEnded || p.state == UIGestureRecognizerStateChanged) {
-        [self saveSharedMarkerPosition];
-        CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR(NOTIFY_MOVE), NULL, NULL, YES);
+        // Encode position directly in notification name for instant cross-instance sync
+        NSString *notifyName = [NSString stringWithFormat:@"%s|%.0f|%.0f", NOTIFY_MOVE, v.center.x, v.center.y];
+        CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), (__bridge CFStringRef)notifyName, NULL, NULL, YES);
     }
 }
 
-- (void)saveSharedMarkerPosition {
+- (void)applyMarkerPositionFromNotificationName:(NSString *)name {
+    // Format: "com.abdulilah.circleMoved|x|y"
     if (!self.tapMarker) return;
-    UIWindow *w = [UIApplication sharedApplication].keyWindow;
-    CGPoint pt = [self.tapMarker convertPoint:CGPointMake(self.tapMarker.bounds.size.width/2, self.tapMarker.bounds.size.height/2) toView:w];
-    NSDictionary *dict = @{@"x": @(pt.x), @"y": @(pt.y)};
-    [dict writeToFile:SHARED_PATH atomically:YES];
-}
-
-- (void)loadSharedMarkerPosition {
-    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:SHARED_PATH];
-    if (dict && self.tapMarker) {
-        CGFloat x = [dict[@"x"] floatValue];
-        CGFloat y = [dict[@"y"] floatValue];
-        if (x > 0 && y > 0) {
+    NSArray *parts = [name componentsSeparatedByString:@"|"];
+    if (parts.count != 3) return;
+    CGFloat x = [parts[1] floatValue];
+    CGFloat y = [parts[2] floatValue];
+    if (x > 0 && y > 0) {
+        dispatch_async(dispatch_get_main_queue(), ^{
             self.tapMarker.center = CGPointMake(x, y);
-        }
+        });
     }
-}
-
-- (void)markerPositionDidChange {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        [self loadSharedMarkerPosition];
-    });
 }
 
 - (CGPoint)tapMarkerPosition {
@@ -1284,14 +1272,17 @@ static void tapStoppedCallback(CFNotificationCenterRef center, void *observer, C
 
 #pragma mark - Darwin Notification Callbacks
 
-static void markerMovedCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
-    [(__bridge id)observer markerPositionDidChange];
+static void allNotificationsCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
+    NSString *nsName = (__bridge NSString *)name;
+    if ([nsName hasPrefix:@NOTIFY_MOVE]) {
+        [(__bridge id)observer applyMarkerPositionFromNotificationName:nsName];
+    }
 }
 
 static void tapStartedCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
-    [(__bridge id)observer performSelectorOnMainThread:@selector(startTap) withObject:nil waitUntilDone:NO];
+    [(__bridge AbdulilahManager *)observer performSelectorOnMainThread:@selector(startTap) withObject:nil waitUntilDone:NO];
 }
 
 static void tapStoppedCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
-    [(__bridge id)observer performSelectorOnMainThread:@selector(stopTap) withObject:nil waitUntilDone:NO];
+    [(__bridge AbdulilahManager *)observer performSelectorOnMainThread:@selector(stopTap) withObject:nil waitUntilDone:NO];
 }
