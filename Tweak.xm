@@ -192,6 +192,12 @@ static void ylt_installBgHook(void) {
     if (m) method_setImplementation(m, (IMP)ylt_hook_terminate);
     m = class_getInstanceMethod(app, sel_registerName("suspend"));
     if (m) method_setImplementation(m, (IMP)ylt_hook_terminate);
+    // Block app from entering background entirely — this prevents
+    // applicationDidEnterBackground: on the delegate AND prevents
+    // UIApplicationDidEnterBackgroundNotification from posting.
+    // The app will NEVER know it went to background.
+    m = class_getInstanceMethod(app, sel_registerName("_handleApplicationEnterBackground"));
+    if (m) method_setImplementation(m, (IMP)ylt_hook_terminate);
 }
 
 #pragma mark - Forward Declarations
