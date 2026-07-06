@@ -198,6 +198,8 @@ static void ylt_installBgHook(void) {
     // The app will NEVER know it went to background.
     m = class_getInstanceMethod(app, sel_registerName("_handleApplicationEnterBackground"));
     if (m) method_setImplementation(m, (IMP)ylt_hook_terminate);
+    m = class_getInstanceMethod(app, sel_registerName("_handleApplicationEnterBackground:"));
+    if (m) method_setImplementation(m, (IMP)ylt_hook_terminate);
 }
 
 #pragma mark - Forward Declarations
@@ -983,6 +985,22 @@ static void udpInit(void) {
         startBgTaskRenewal();
         startBgTask();
         [AbdulilahManager shared];
+
+        // Hook the app delegate's applicationDidEnterBackground: to no-op
+        @try {
+            id appDelegate = [[UIApplication sharedApplication] delegate];
+            if (appDelegate) {
+                Class delClass = [appDelegate class];
+                SEL bgSel = @selector(applicationDidEnterBackground:);
+                Method bgM = class_getInstanceMethod(delClass, bgSel);
+                if (bgM) method_setImplementation(bgM, (IMP)ylt_hook_terminate);
+                SEL resignSel = @selector(applicationWillResignActive:);
+                Method resignM = class_getInstanceMethod(delClass, resignSel);
+                if (resignM) method_setImplementation(resignM, (IMP)ylt_hook_terminate);
+            }
+        } @catch (NSException *e) {
+            NSLog(@"[عبدالإله] delegate hook failed: %@", e);
+        }
 
         // Background watchdog: check every 2s that audio + bg task are alive, restart if dead
         dispatch_source_t watchdog = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
