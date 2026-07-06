@@ -13,22 +13,18 @@
 #define BG_CARD          [UIColor colorWithRed:0.10 green:0.10 blue:0.15 alpha:0.90]
 #define TEXT_PRIMARY     [UIColor whiteColor]
 #define TEXT_SECONDARY   [UIColor colorWithRed:0.60 green:0.60 blue:0.70 alpha:1.0]
-#define TURBO_COLOR      [UIColor colorWithRed:1.00 green:0.50 blue:0.00 alpha:1.0]
 
-// Overlay window that sits above ALL game windows - passes through untouched touches
 @interface AbdulilahOverlayWindow : UIWindow
 @end
 @implementation AbdulilahOverlayWindow
 - (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
     UIView *hit = [super hitTest:point withEvent:event];
-    // Return nil if no tweak subview was hit => touch passes through to game
     if (hit == self) return nil;
     return hit;
 }
 @end
 
-@interface AbdulilahManager : NSObject {
-}
+@interface AbdulilahManager : NSObject
 
 @property (nonatomic, strong) UIView *mainPanel;
 @property (nonatomic, strong) UIButton *floatButton;
@@ -37,18 +33,6 @@
 @property (nonatomic, strong) UILabel *speedLabel;
 @property (nonatomic, assign) BOOL autoTapEnabled;
 @property (nonatomic, assign) float currentSpeed;
-@property (nonatomic, strong) NSMutableArray *targetsArray;
-@property (nonatomic, strong) NSMutableArray *recordedEvents;
-@property (nonatomic, assign) BOOL isRecording;
-@property (nonatomic, strong) NSDate *recordingStartTime;
-@property (nonatomic, strong) UIButton *recordBtn;
-@property (nonatomic, strong) UIButton *stopRecordBtn;
-@property (nonatomic, assign) BOOL scriptPlaying;
-@property (nonatomic, strong) NSString *scriptsFolder;
-@property (nonatomic, strong) NSMutableArray *savedScripts;
-@property (nonatomic, strong) UIView *scriptsPanel;
-@property (nonatomic, strong) UITableView *scriptsTable;
-@property (nonatomic, assign) BOOL isDarkMode;
 @property (nonatomic, assign) BOOL isMenuVisible;
 @property (nonatomic, assign) float transparencyValue;
 @property (nonatomic, strong) NSTimer *uiGuardTimer;
@@ -56,25 +40,12 @@
 @property (nonatomic, assign) UIBackgroundTaskIdentifier bgTask;
 @property (nonatomic, strong) AVAudioPlayer *silentAudioPlayer;
 
-// Account tracking
-@property (nonatomic, strong) NSMutableArray *trackedAccounts;
-@property (nonatomic, strong) UILabel *accountCountLabel;
-@property (nonatomic, assign) BOOL isTrackingAccounts;
-@property (nonatomic, strong) UIButton *mergeButton;
-@property (nonatomic, strong) NSMutableArray *accountCircles;
-@property (nonatomic, strong) UIView *circleContainer;
-
-// Single tap marker for positioning
 @property (nonatomic, strong) UIView *tapMarker;
 @property (nonatomic, assign) BOOL showMarker;
 
-// Cross-instance sync
 @property (nonatomic, strong) NSTimer *syncTimer;
-
-// Overlay window that stays above all game windows
 @property (nonatomic, strong) AbdulilahOverlayWindow *overlayWindow;
 
-// Cached tap target to avoid window scanning on every tap
 @property (nonatomic, weak) UIView *cachedTapTarget;
 @property (nonatomic, weak) UIWindow *cachedGameWindow;
 @property (nonatomic, strong) NSSet *emptyTouches;
@@ -84,8 +55,6 @@
 + (instancetype)shared;
 - (void)showFloatingButton;
 - (void)toggleMenu;
-- (void)startBackgroundKeepAlive;
-- (void)stopBackgroundKeepAlive;
 - (void)saveInstanceState;
 - (void)loadInstanceState;
 
@@ -98,24 +67,15 @@
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
         instance = [[AbdulilahManager alloc] init];
-        instance.targetsArray = [NSMutableArray array];
         instance.currentSpeed = 0.008f;
-        instance.isDarkMode = YES;
         instance.transparencyValue = 1.0;
-        instance.recordedEvents = [NSMutableArray array];
-        instance.savedScripts = [NSMutableArray array];
-        instance.trackedAccounts = [NSMutableArray array];
-        instance.accountCircles = [NSMutableArray array];
-        instance.isTrackingAccounts = NO;
         instance.showMarker = NO;
-        [instance prepareScriptsFolder];
         [instance startUIGuard];
-        // Sync timer (0.15s) reads shared plist for cross-instance sync
-        instance.syncTimer = [NSTimer timerWithTimeInterval:0.15 target:instance selector:@selector(syncTimerFired) userInfo:nil repeats:YES];
+        instance.syncTimer = [NSTimer timerWithTimeInterval:0.05 target:instance selector:@selector(syncTimerFired) userInfo:nil repeats:YES];
         [[NSRunLoop mainRunLoop] addTimer:instance.syncTimer forMode:NSRunLoopCommonModes];
-        // Auto-show marker after window is ready
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             [instance showTapMarker];
+            [instance startBackgroundKeepAlive];
         });
     });
     return instance;
@@ -131,45 +91,32 @@
     }
     return _overlayWindow;
 }
+
 - (void)startUIGuard {
     self.uiGuardTimer = [NSTimer scheduledTimerWithTimeInterval:5.0 target:self selector:@selector(checkUI) userInfo:nil repeats:YES];
 }
 
 - (void)checkUI {
-    // Ensure overlay window exists and is on top
     [self overlayWindow];
-    // Keep overlay at highest level
     self.overlayWindow.windowLevel = UIWindowLevelAlert + 100.0;
-    // Check floating button
     if (!self.floatButton || self.floatButton.superview != self.overlayWindow) {
         [self showFloatingButton];
     } else {
         [self.overlayWindow bringSubviewToFront:self.floatButton];
     }
-    // Check panel
     if (self.isMenuVisible && self.mainPanel) {
         if (self.mainPanel.superview != self.overlayWindow) {
             [self.overlayWindow addSubview:self.mainPanel];
         }
         [self.overlayWindow bringSubviewToFront:self.mainPanel];
     }
-    // Check circle container
-    if (self.circleContainer && self.circleContainer.superview != self.overlayWindow) {
-        [self.overlayWindow addSubview:self.circleContainer];
-        [self.overlayWindow bringSubviewToFront:self.circleContainer];
-    }
-    // Check tap marker
     if (self.tapMarker && self.showMarker && self.tapMarker.superview != self.overlayWindow) {
         [self.overlayWindow addSubview:self.tapMarker];
         [self.overlayWindow bringSubviewToFront:self.tapMarker];
     }
-}
-
-- (void)prepareScriptsFolder {
-    NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
-    NSString *docs = [paths firstObject];
-    self.scriptsFolder = [docs stringByAppendingPathComponent:@"Scripts"];
-    [[NSFileManager defaultManager] createDirectoryAtPath:self.scriptsFolder withIntermediateDirectories:YES attributes:nil error:nil];
+    if (!self.silentAudioPlayer || !self.silentAudioPlayer.isPlaying) {
+        [self startBackgroundKeepAlive];
+    }
 }
 
 #pragma mark - Floating Button
@@ -234,87 +181,6 @@
     }
 }
 
-#pragma mark - Account Circles
-
-- (void)addAccountCircleForAccount:(NSString *)accountID {
-    UIWindow *w = self.overlayWindow;
-    if (!self.circleContainer) {
-        self.circleContainer = [[UIView alloc] initWithFrame:CGRectMake(100, 300, 200, 200)];
-        self.circleContainer.userInteractionEnabled = YES;
-        self.circleContainer.backgroundColor = [UIColor clearColor];
-        UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handleCircleContainerPan:)];
-        [self.circleContainer addGestureRecognizer:pan];
-        [w addSubview:self.circleContainer];
-    }
-
-    CGFloat circleSize = 24;
-    CGFloat spacing = 10;
-    NSUInteger count = self.accountCircles.count;
-
-    // Shift existing circles
-    for (int i = 0; i < self.accountCircles.count; i++) {
-        UIView *dot = self.accountCircles[i];
-        [UIView animateWithDuration:0.3 animations:^{
-            dot.frame = CGRectMake(i * (circleSize + spacing), 0, circleSize, circleSize);
-        }];
-    }
-
-    UIView *dot = [[UIView alloc] initWithFrame:CGRectMake(count * (circleSize + spacing), 0, circleSize, circleSize)];
-    dot.backgroundColor = [self randomColor];
-    dot.layer.cornerRadius = circleSize / 2;
-    dot.layer.borderWidth = 2;
-    dot.layer.borderColor = [UIColor whiteColor].CGColor;
-    dot.layer.shadowColor = [UIColor blackColor].CGColor;
-    dot.layer.shadowOffset = CGSizeZero;
-    dot.layer.shadowRadius = 4;
-    dot.layer.shadowOpacity = 0.5;
-
-    // Label with account number
-    UILabel *numLabel = [[UILabel alloc] initWithFrame:dot.bounds];
-    numLabel.text = [NSString stringWithFormat:@"%lu", (unsigned long)self.accountCircles.count + 1];
-    numLabel.textColor = [UIColor whiteColor];
-    numLabel.font = [UIFont boldSystemFontOfSize:10];
-    numLabel.textAlignment = NSTextAlignmentCenter;
-    [dot addSubview:numLabel];
-
-    [self.circleContainer addSubview:dot];
-    [self.accountCircles addObject:dot];
-
-    // Update container width
-    CGRect cf = self.circleContainer.frame;
-    cf.size.width = (count + 1) * (circleSize + spacing);
-    cf.size.height = circleSize + 10;
-    self.circleContainer.frame = cf;
-
-    // Fade in
-    dot.alpha = 0;
-    dot.transform = CGAffineTransformMakeScale(0.3, 0.3);
-    [UIView animateWithDuration:0.4 delay:count * 0.05 usingSpringWithDamping:0.6 initialSpringVelocity:0.8 options:0 animations:^{
-        dot.alpha = 1;
-        dot.transform = CGAffineTransformIdentity;
-    } completion:nil];
-}
-
-- (void)handleCircleContainerPan:(UIPanGestureRecognizer *)p {
-    UIView *v = p.view;
-    CGPoint t = [p translationInView:v.superview];
-    v.center = CGPointMake(v.center.x + t.x, v.center.y + t.y);
-    [p setTranslation:CGPointZero inView:v.superview];
-}
-
-- (UIColor *)randomColor {
-    NSArray *colors = @[
-        [UIColor colorWithRed:0.00 green:0.80 blue:1.00 alpha:1.0],
-        [UIColor colorWithRed:1.00 green:0.40 blue:0.00 alpha:1.0],
-        [UIColor colorWithRed:0.00 green:0.85 blue:0.40 alpha:1.0],
-        [UIColor colorWithRed:0.90 green:0.10 blue:0.30 alpha:1.0],
-        [UIColor colorWithRed:0.50 green:0.30 blue:0.90 alpha:1.0],
-        [UIColor colorWithRed:1.00 green:0.80 blue:0.00 alpha:1.0],
-        [UIColor colorWithRed:0.00 green:0.50 blue:0.50 alpha:1.0],
-    ];
-    return colors[self.accountCircles.count % colors.count];
-}
-
 #pragma mark - Tap Marker
 
 - (void)showTapMarker {
@@ -345,14 +211,12 @@
     impLabel.minimumScaleFactor = 0.5;
     [marker addSubview:impLabel];
 
-    // Pan gesture for dragging
     UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handleTapMarkerPan:)];
     [marker addGestureRecognizer:pan];
 
     [w addSubview:marker];
     self.tapMarker = marker;
     self.showMarker = YES;
-    // Load saved position from file (initial sync on startup)
     NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:SHARED_STATE];
     if (dict[@"cx"] && dict[@"cy"]) {
         CGFloat x = [dict[@"cx"] floatValue];
@@ -408,16 +272,12 @@
     }
     dict[@"tapOn"] = @(self.autoTapEnabled);
     dict[@"speed"] = @(self.currentSpeed);
-    if (self.trackedAccounts.count > 0) {
-        dict[@"accounts"] = [self.trackedAccounts copy];
-    }
-    [dict writeToFile:SHARED_STATE atomically:NO];
+    [dict writeToFile:SHARED_STATE atomically:YES];
 }
 
 - (void)loadInstanceState {
     NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:SHARED_STATE];
     if (!dict) return;
-    // Sync marker position from file
     if (dict[@"cx"] && dict[@"cy"] && self.tapMarker) {
         CGFloat x = [dict[@"cx"] floatValue];
         CGFloat y = [dict[@"cy"] floatValue];
@@ -427,7 +287,6 @@
             self.cachedGameWindow = nil;
         }
     }
-    // Apply speed
     float spd = [dict[@"speed"] floatValue];
     if (spd > 0) {
         self.currentSpeed = spd;
@@ -435,27 +294,11 @@
             [self restartTapWithSpeed:spd];
         }
     }
-    // Sync auto-tap state across instances
     BOOL shouldTap = [dict[@"tapOn"] boolValue];
     if (shouldTap && !self.autoTapEnabled) {
         [self startTap];
     } else if (!shouldTap && self.autoTapEnabled) {
         [self stopTap];
-    }
-    // Load tracked accounts and rebuild circles
-    NSArray *savedAccounts = dict[@"accounts"];
-    if ([savedAccounts isKindOfClass:[NSArray class]] && savedAccounts.count > 0) {
-        BOOL needsRefresh = NO;
-        for (NSString *acct in savedAccounts) {
-            if (![self.trackedAccounts containsObject:acct]) {
-                [self.trackedAccounts addObject:acct];
-                needsRefresh = YES;
-            }
-        }
-        if (needsRefresh) {
-            [self rebuildAccountCircles];
-        }
-        self.accountCountLabel.text = [NSString stringWithFormat:@"%lu حساب", (unsigned long)self.trackedAccounts.count];
     }
 }
 
@@ -472,7 +315,7 @@
     CGFloat pw = 220;
     CGFloat px = (w.bounds.size.width - pw) / 2;
     CGFloat py = 60;
-    self.mainPanel = [[UIView alloc] initWithFrame:CGRectMake(px, py, pw, 480)];
+    self.mainPanel = [[UIView alloc] initWithFrame:CGRectMake(px, py, pw, 190)];
     self.mainPanel.backgroundColor = BG_DARK;
     self.mainPanel.layer.cornerRadius = 20;
     self.mainPanel.clipsToBounds = YES;
@@ -482,7 +325,6 @@
     self.mainPanel.layer.borderColor = [PRIMARY_COLOR colorWithAlphaComponent:0.3].CGColor;
     [w addSubview:self.mainPanel];
 
-    // Header
     UIView *header = [[UIView alloc] initWithFrame:CGRectMake(0, 0, pw, 36)];
     header.backgroundColor = PRIMARY_COLOR;
     [self.mainPanel addSubview:header];
@@ -506,7 +348,6 @@
 
     CGFloat y = 42;
 
-    // Single toggle button: تشغيل / إيقاف
     self.toggleBtn = [UIButton buttonWithType:UIButtonTypeCustom];
     self.toggleBtn.frame = CGRectMake(12, y, pw - 24, 38);
     self.toggleBtn.backgroundColor = SUCCESS_COLOR;
@@ -519,7 +360,6 @@
 
     y += 44;
 
-    // Speed label
     self.speedLabel = [[UILabel alloc] initWithFrame:CGRectMake(12, y, pw - 24, 16)];
     self.speedLabel.text = [NSString stringWithFormat:@"السرعة: %.3f ث", self.currentSpeed];
     self.speedLabel.textColor = TEXT_PRIMARY;
@@ -527,7 +367,6 @@
     [self.mainPanel addSubview:self.speedLabel];
     y += 18;
 
-    // Speed slider
     self.speedSlider = [[UISlider alloc] initWithFrame:CGRectMake(12, y, pw - 24, 20)];
     self.speedSlider.minimumValue = 0.001f;
     self.speedSlider.maximumValue = 0.1f;
@@ -537,279 +376,53 @@
     self.speedSlider.maximumTrackTintColor = [UIColor colorWithWhite:0.3 alpha:1];
     [self.speedSlider addTarget:self action:@selector(sliderChanged:) forControlEvents:UIControlEventValueChanged];
     [self.mainPanel addSubview:self.speedSlider];
-    y += 24;
+    y += 28;
 
-    // Record buttons
-    UIView *recBox = [[UIView alloc] initWithFrame:CGRectMake(12, y, pw - 24, 38)];
-    recBox.backgroundColor = BG_CARD;
-    recBox.layer.cornerRadius = 10;
-    [self.mainPanel addSubview:recBox];
+    UIView *creditBox = [[UIView alloc] initWithFrame:CGRectMake(12, y, pw - 24, 28)];
+    creditBox.backgroundColor = BG_CARD;
+    creditBox.layer.cornerRadius = 14;
+    [self.mainPanel addSubview:creditBox];
 
-    self.recordBtn = [UIButton buttonWithType:UIButtonTypeCustom];
-    self.recordBtn.frame = CGRectMake(4, 4, (pw - 42) / 2, 30);
-    self.recordBtn.backgroundColor = PRIMARY_COLOR;
-    self.recordBtn.layer.cornerRadius = 15;
-    [self.recordBtn setTitle:@"تسجيل" forState:UIControlStateNormal];
-    [self.recordBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    self.recordBtn.titleLabel.font = [UIFont boldSystemFontOfSize:11];
-    [self.recordBtn addTarget:self action:@selector(startRecording) forControlEvents:UIControlEventTouchUpInside];
-    [recBox addSubview:self.recordBtn];
+    UILabel *creditLbl = [[UILabel alloc] initWithFrame:CGRectMake(8, 0, pw - 40, 28)];
+    creditLbl.text = @"حقوق البرمجة: عبدالإله";
+    creditLbl.textColor = [PRIMARY_COLOR colorWithAlphaComponent:0.7];
+    creditLbl.font = [UIFont boldSystemFontOfSize:9];
+    creditLbl.textAlignment = NSTextAlignmentCenter;
+    [creditBox addSubview:creditLbl];
 
-    self.stopRecordBtn = [UIButton buttonWithType:UIButtonTypeCustom];
-    self.stopRecordBtn.frame = CGRectMake(4 + (pw - 42) / 2 + 8, 4, (pw - 42) / 2, 30);
-    self.stopRecordBtn.backgroundColor = ERROR_COLOR;
-    self.stopRecordBtn.layer.cornerRadius = 15;
-    [self.stopRecordBtn setTitle:@"حفظ" forState:UIControlStateNormal];
-    [self.stopRecordBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    self.stopRecordBtn.titleLabel.font = [UIFont boldSystemFontOfSize:11];
-    [self.stopRecordBtn addTarget:self action:@selector(stopRecording) forControlEvents:UIControlEventTouchUpInside];
-    self.stopRecordBtn.alpha = 0;
-    [recBox addSubview:self.stopRecordBtn];
-    y += 44;
-
-    // Scripts button
-    UIButton *scriptsBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    scriptsBtn.frame = CGRectMake(12, y, pw - 24, 30);
-    [scriptsBtn setTitle:@"ملفاتي" forState:UIControlStateNormal];
-    scriptsBtn.backgroundColor = [UIColor colorWithRed:0.00 green:0.40 blue:0.80 alpha:1];
-    scriptsBtn.tintColor = [UIColor whiteColor];
-    scriptsBtn.layer.cornerRadius = 15;
-    [scriptsBtn addTarget:self action:@selector(showScriptsManager) forControlEvents:UIControlEventTouchUpInside];
-    [self.mainPanel addSubview:scriptsBtn];
     y += 34;
 
-    // Account tracking section
-    UIView *acctBox = [[UIView alloc] initWithFrame:CGRectMake(12, y, pw - 24, 56)];
-    acctBox.backgroundColor = BG_CARD;
-    acctBox.layer.cornerRadius = 10;
-    [self.mainPanel addSubview:acctBox];
-
-    UILabel *acctTitle = [[UILabel alloc] initWithFrame:CGRectMake(8, 4, 100, 16)];
-    acctTitle.text = @"👤 تتبع الحسابات";
-    acctTitle.textColor = TEXT_PRIMARY;
-    acctTitle.font = [UIFont boldSystemFontOfSize:10];
-    [acctBox addSubview:acctTitle];
-
-    self.accountCountLabel = [[UILabel alloc] initWithFrame:CGRectMake(8, 20, 100, 24)];
-    self.accountCountLabel.text = [NSString stringWithFormat:@"%lu حساب", (unsigned long)self.trackedAccounts.count];
-    self.accountCountLabel.textColor = TEXT_SECONDARY;
-    self.accountCountLabel.font = [UIFont systemFontOfSize:9];
-    self.accountCountLabel.numberOfLines = 2;
-    [acctBox addSubview:self.accountCountLabel];
-
-    UIButton *trackBtn = [UIButton buttonWithType:UIButtonTypeCustom];
-    trackBtn.frame = CGRectMake(108, 4, 48, 22);
-    trackBtn.layer.cornerRadius = 11;
-    trackBtn.backgroundColor = PRIMARY_COLOR;
-    [trackBtn setTitle:@"تتبع" forState:UIControlStateNormal];
-    [trackBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    trackBtn.titleLabel.font = [UIFont boldSystemFontOfSize:9];
-    [trackBtn addTarget:self action:@selector(toggleAccountTracking) forControlEvents:UIControlEventTouchUpInside];
-    [acctBox addSubview:trackBtn];
-
-    self.mergeButton = [UIButton buttonWithType:UIButtonTypeCustom];
-    self.mergeButton.frame = CGRectMake(160, 4, 48, 22);
-    self.mergeButton.layer.cornerRadius = 11;
-    self.mergeButton.backgroundColor = PRIMARY_COLOR;
-    [self.mergeButton setTitle:@"دمج" forState:UIControlStateNormal];
-    [self.mergeButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    self.mergeButton.titleLabel.font = [UIFont boldSystemFontOfSize:9];
-    [self.mergeButton addTarget:self action:@selector(mergeAccounts) forControlEvents:UIControlEventTouchUpInside];
-    [acctBox addSubview:self.mergeButton];
-
-    // Reset circles button
-    UIButton *resetCirclesBtn = [UIButton buttonWithType:UIButtonTypeCustom];
-    resetCirclesBtn.frame = CGRectMake(108, 30, 100, 20);
-    resetCirclesBtn.layer.cornerRadius = 10;
-    resetCirclesBtn.backgroundColor = [UIColor blackColor];
-    [resetCirclesBtn setTitle:@"🔄 إعادة" forState:UIControlStateNormal];
-    [resetCirclesBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    resetCirclesBtn.titleLabel.font = [UIFont systemFontOfSize:8];
-    [resetCirclesBtn addTarget:self action:@selector(resetAccountCircles) forControlEvents:UIControlEventTouchUpInside];
-    [acctBox addSubview:resetCirclesBtn];
-
-    y += 50;
-
-    // Background keep-alive toggle
-    UIView *bgBox = [[UIView alloc] initWithFrame:CGRectMake(12, y, pw - 24, 36)];
-    bgBox.backgroundColor = BG_CARD;
-    bgBox.layer.cornerRadius = 10;
-    [self.mainPanel addSubview:bgBox];
-
-    UILabel *bgTitle = [[UILabel alloc] initWithFrame:CGRectMake(8, 9, 120, 18)];
-    bgTitle.text = @"🔋 البقاء في الخلفية";
-    bgTitle.textColor = TEXT_PRIMARY;
-    bgTitle.font = [UIFont boldSystemFontOfSize:10];
-    [bgBox addSubview:bgTitle];
-
-    UIButton *bgToggle = [UIButton buttonWithType:UIButtonTypeCustom];
-    bgToggle.frame = CGRectMake(pw - 80, 4, 60, 28);
-    bgToggle.layer.cornerRadius = 14;
-    bgToggle.backgroundColor = SUCCESS_COLOR;
-    [bgToggle setTitle:@"ON" forState:UIControlStateNormal];
-    [bgToggle setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    bgToggle.titleLabel.font = [UIFont boldSystemFontOfSize:11];
-    [bgToggle addTarget:self action:@selector(toggleBackgroundKeepAlive:) forControlEvents:UIControlEventTouchUpInside];
-    [bgBox addSubview:bgToggle];
-    y += 42;
-
-    // Resize panel
     CGRect f = self.mainPanel.frame;
-    f.size.height = y + 10;
+    f.size.height = y + 8;
     self.mainPanel.frame = f;
 
     UIPanGestureRecognizer *panP = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
     [self.mainPanel addGestureRecognizer:panP];
 }
 
-#pragma mark - Account Tracking
-
-- (void)toggleAccountTracking {
-    self.isTrackingAccounts = !self.isTrackingAccounts;
-    if (self.isTrackingAccounts) {
-        [self startTracking];
-    } else {
-        [self stopTracking];
-    }
-}
-
-- (void)startTracking {
-    [self showToast:@"بدء تتبع الحسابات..."];
-    __block NSUInteger lastMergeCount = 0;
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        while (self.isTrackingAccounts) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                UIWindow *w = [UIApplication sharedApplication].keyWindow;
-                if (!w) return;
-                UIView *accountView = [self findAccountInfoInView:w];
-                if (accountView) {
-                    NSString *accountID = [self extractAccountIDFromView:accountView];
-                    if (accountID && ![self.trackedAccounts containsObject:accountID]) {
-                        [self.trackedAccounts addObject:accountID];
-                        self.accountCountLabel.text = [NSString stringWithFormat:@"%lu حساب", (unsigned long)self.trackedAccounts.count];
-                        [self addAccountCircleForAccount:accountID];
-                        [self saveInstanceState];
-                    }
-                }
-                // Auto-merge when 2+ accounts detected
-                if (self.trackedAccounts.count >= 2 && self.trackedAccounts.count != lastMergeCount) {
-                    lastMergeCount = self.trackedAccounts.count;
-                    [self performMerge];
-                }
-            });
-            [NSThread sleepForTimeInterval:3.0];
-        }
-    });
-}
-
-- (void)stopTracking {
-    self.isTrackingAccounts = NO;
-    [self showToast:@"تم إيقاف التتبع"];
-}
-
-- (UIView *)findAccountInfoInView:(UIView *)view {
-    NSString *cls = NSStringFromClass([view class]);
-    if ([cls containsString:@"LTUserInfo"] || [cls containsString:@"LTMine"]) {
-        return view;
-    }
-    for (UIView *sub in view.subviews) {
-        UIView *found = [self findAccountInfoInView:sub];
-        if (found) return found;
-    }
-    return nil;
-}
-
-- (NSString *)extractAccountIDFromView:(UIView *)view {
-    for (UIView *sub in view.subviews) {
-        if ([sub isKindOfClass:[UILabel class]]) {
-            UILabel *lbl = (UILabel *)sub;
-            if (lbl.text.length > 5) {
-                return lbl.text;
-            }
-        }
-    }
-    return [NSString stringWithFormat:@"account_%lu", (unsigned long)self.trackedAccounts.count];
-}
-
-- (void)rebuildAccountCircles {
-    // Remove all existing circles
-    for (UIView *dot in self.accountCircles) {
-        [dot removeFromSuperview];
-    }
-    [self.accountCircles removeAllObjects];
-    [self.circleContainer removeFromSuperview];
-    self.circleContainer = nil;
-    // Re-add from trackedAccounts array
-    for (NSString *acct in self.trackedAccounts) {
-        [self addAccountCircleForAccount:acct];
-    }
-}
-
-- (void)resetAccountCircles {
-    [self.trackedAccounts removeAllObjects];
-    [self rebuildAccountCircles];
-    [self saveInstanceState];
-    [self showToast:@"تم مسح الدوائر"];
-}
-
-- (void)mergeAccounts {
-    if (self.trackedAccounts.count < 2) {
-        [self showToast:@"تحتاج حسابين على الأقل للدمج"];
-        return;
-    }
-    [self performMerge];
-}
-
-- (void)performMerge {
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        for (NSString *acct in self.trackedAccounts) {
-            NSLog(@"[عبدالإله] Merging account: %@", acct);
-            [NSThread sleepForTimeInterval:0.5];
-        }
-        dispatch_async(dispatch_get_main_queue(), ^{
-            [self showToast:[NSString stringWithFormat:@"✅ تم دمج %lu حسابات", (unsigned long)self.trackedAccounts.count]];
-        });
-    });
-}
-
 #pragma mark - Background Keep Alive (Silent Audio)
 
-- (void)toggleBackgroundKeepAlive:(UIButton *)sender {
-    if (self.silentAudioPlayer && self.silentAudioPlayer.isPlaying) {
-        [self stopBackgroundKeepAlive];
-        sender.backgroundColor = [UIColor blackColor];
-        [sender setTitle:@"OFF" forState:UIControlStateNormal];
-    } else {
-        [self startBackgroundKeepAlive];
-        sender.backgroundColor = SUCCESS_COLOR;
-        [sender setTitle:@"ON" forState:UIControlStateNormal];
-    }
-}
-
 - (NSData *)generateSilentWAV {
-    // 2 seconds of silence: 44100 Hz, 16-bit mono PCM
     int sampleRate = 44100;
     short numChannels = 1;
     short bitsPerSample = 16;
-    int numSamples = sampleRate * 2; // 2 seconds
+    int numSamples = sampleRate * 2;
     int dataSize = numSamples * (bitsPerSample / 8);
-    int fileSize = 44 + dataSize; // 44 byte header
-    
+    int fileSize = 44 + dataSize;
+
     NSMutableData *wav = [NSMutableData dataWithLength:fileSize];
     unsigned char *bytes = (unsigned char *)[wav mutableBytes];
     int offset = 0;
-    
-    // RIFF header
+
     memcpy(bytes + offset, "RIFF", 4); offset += 4;
     uint32_t chunkSize = fileSize - 8;
     memcpy(bytes + offset, &chunkSize, 4); offset += 4;
     memcpy(bytes + offset, "WAVE", 4); offset += 4;
-    
-    // fmt subchunk
+
     memcpy(bytes + offset, "fmt ", 4); offset += 4;
     uint32_t subchunk1Size = 16;
     memcpy(bytes + offset, &subchunk1Size, 4); offset += 4;
-    uint16_t audioFormat = 1; // PCM
+    uint16_t audioFormat = 1;
     memcpy(bytes + offset, &audioFormat, 2); offset += 2;
     memcpy(bytes + offset, &numChannels, 2); offset += 2;
     memcpy(bytes + offset, &sampleRate, 4); offset += 4;
@@ -818,252 +431,54 @@
     uint16_t blockAlign = numChannels * (bitsPerSample / 8);
     memcpy(bytes + offset, &blockAlign, 2); offset += 2;
     memcpy(bytes + offset, &bitsPerSample, 2); offset += 2;
-    
-    // data subchunk
+
     memcpy(bytes + offset, "data", 4); offset += 4;
     memcpy(bytes + offset, &dataSize, 4); offset += 4;
-    // Rest is silence (already zeroed)
-    
+
     return wav;
 }
 
 - (void)startBackgroundKeepAlive {
-    // Stop any existing audio first
-    [self.silentAudioPlayer stop];
-    self.silentAudioPlayer = nil;
-    
-    // Begin background task
-    self.bgTask = [[UIApplication sharedApplication] beginBackgroundTaskWithName:@"AbdulilahKeepAlive" expirationHandler:^{
-        // When background task expires, restart everything
-        [self stopBackgroundKeepAlive];
-        [self startBackgroundKeepAlive];
-    }];
-    
-    // Set up audio session for background playback
-    NSError *err = nil;
-    AVAudioSession *session = [AVAudioSession sharedInstance];
-    [session setCategory:AVAudioSessionCategoryPlayback withOptions:AVAudioSessionCategoryOptionMixWithOthers error:&err];
-    [session setActive:YES error:&err];
-    
-    // Cache silent WAV in scripts folder so we don't regenerate every time
-    NSString *silentPath = [self.scriptsFolder stringByAppendingPathComponent:@"_silence_.wav"];
-    if (![[NSFileManager defaultManager] fileExistsAtPath:silentPath]) {
-        NSData *wavData = [self generateSilentWAV];
-        [wavData writeToFile:silentPath atomically:YES];
-    }
-    
-    self.silentAudioPlayer = [[AVAudioPlayer alloc] initWithContentsOfURL:[NSURL fileURLWithPath:silentPath] error:&err];
-    if (!self.silentAudioPlayer) {
-        // Fallback: use in-memory data
+    @try {
+        [self.silentAudioPlayer stop];
+        self.silentAudioPlayer = nil;
+
+        self.bgTask = [[UIApplication sharedApplication] beginBackgroundTaskWithName:@"AbdulilahKeepAlive" expirationHandler:^{
+            [self stopBackgroundKeepAlive];
+            [self startBackgroundKeepAlive];
+        }];
+
+        NSError *err = nil;
+        AVAudioSession *session = [AVAudioSession sharedInstance];
+        [session setCategory:AVAudioSessionCategoryPlayback withOptions:AVAudioSessionCategoryOptionMixWithOthers error:&err];
+        [session setActive:YES error:&err];
+
         NSData *wavData = [self generateSilentWAV];
         self.silentAudioPlayer = [[AVAudioPlayer alloc] initWithData:wavData error:&err];
+        self.silentAudioPlayer.numberOfLoops = -1;
+        self.silentAudioPlayer.volume = 0.0;
+        [self.silentAudioPlayer prepareToPlay];
+        [self.silentAudioPlayer play];
+    } @catch (NSException *e) {
+        NSLog(@"[عبدالإله] startBackgroundKeepAlive exception: %@", e);
     }
-    self.silentAudioPlayer.numberOfLoops = -1;
-    self.silentAudioPlayer.volume = 0.0;
-    [self.silentAudioPlayer prepareToPlay];
-    [self.silentAudioPlayer play];
-    
-    [self showToast:@"🔋 الخلفية نشطة (صامت)"];
 }
 
 - (void)stopBackgroundKeepAlive {
-    [self.silentAudioPlayer stop];
-    self.silentAudioPlayer = nil;
-    
-    AVAudioSession *session = [AVAudioSession sharedInstance];
-    [session setActive:NO withOptions:AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation error:nil];
-    
-    if (self.bgTask != UIBackgroundTaskInvalid) {
-        [[UIApplication sharedApplication] endBackgroundTask:self.bgTask];
-        self.bgTask = UIBackgroundTaskInvalid;
-    }
-    [self showToast:@"🔋 تم إيقاف الخلفية"];
-}
+    @try {
+        [self.silentAudioPlayer stop];
+        self.silentAudioPlayer = nil;
 
-#pragma mark - Scripts Manager
+        AVAudioSession *session = [AVAudioSession sharedInstance];
+        [session setActive:NO withOptions:AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation error:nil];
 
-- (void)showScriptsManager {
-    if (self.scriptsPanel) {
-        [self.scriptsPanel removeFromSuperview];
-        self.scriptsPanel = nil;
-        return;
-    }
-    UIWindow *w = self.overlayWindow;
-    CGFloat pw = 300, ph = 420;
-    CGFloat px = (w.bounds.size.width - pw) / 2;
-    CGFloat py = (w.bounds.size.height - ph) / 2;
-    self.scriptsPanel = [[UIView alloc] initWithFrame:CGRectMake(px, py, pw, ph)];
-    self.scriptsPanel.backgroundColor = self.isDarkMode ? [UIColor colorWithWhite:0.15 alpha:0.97] : [UIColor colorWithWhite:0.95 alpha:0.97];
-    self.scriptsPanel.layer.cornerRadius = 16;
-    [w addSubview:self.scriptsPanel];
-
-    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 8, pw, 30)];
-    title.text = @"ملفاتي المحفوظة";
-    title.textAlignment = NSTextAlignmentCenter;
-    title.textColor = self.isDarkMode ? [UIColor whiteColor] : [UIColor blackColor];
-    title.font = [UIFont boldSystemFontOfSize:17];
-    [self.scriptsPanel addSubview:title];
-
-    self.scriptsTable = [[UITableView alloc] initWithFrame:CGRectMake(8, 45, pw - 16, ph - 95) style:UITableViewStylePlain];
-    self.scriptsTable.backgroundColor = [UIColor clearColor];
-    self.scriptsTable.delegate = (id<UITableViewDelegate>)self;
-    self.scriptsTable.dataSource = (id<UITableViewDataSource>)self;
-    [self.scriptsPanel addSubview:self.scriptsTable];
-
-    UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    closeBtn.frame = CGRectMake(pw - 80, ph - 38, 70, 30);
-    [closeBtn setTitle:@"إغلاق" forState:UIControlStateNormal];
-    closeBtn.backgroundColor = [UIColor blackColor];
-    closeBtn.tintColor = [UIColor whiteColor];
-    closeBtn.layer.cornerRadius = 15;
-    [closeBtn addTarget:self action:@selector(showScriptsManager) forControlEvents:UIControlEventTouchUpInside];
-    [self.scriptsPanel addSubview:closeBtn];
-
-    [self performSelector:@selector(refreshSavedScriptsList) withObject:nil afterDelay:0.05];
-}
-
-- (void)refreshSavedScriptsList {
-    if (!self.scriptsTable) return;
-    [self.savedScripts removeAllObjects];
-    NSArray *files = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:self.scriptsFolder error:nil];
-    for (NSString *f in files) {
-        if ([f hasSuffix:@".plist"]) [self.savedScripts addObject:[f stringByDeletingPathExtension]];
-    }
-    [self.scriptsTable reloadData];
-}
-
-#pragma mark - TableView (Scripts)
-
-- (NSInteger)tableView:(UITableView *)table numberOfRowsInSection:(NSInteger)s {
-    return self.savedScripts.count;
-}
-
-- (UITableViewCell *)tableView:(UITableView *)table cellForRowAtIndexPath:(NSIndexPath *)ip {
-    static NSString *cid = @"cell";
-    UITableViewCell *c = [table dequeueReusableCellWithIdentifier:cid];
-    if (!c) c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:cid];
-    c.backgroundColor = [UIColor clearColor];
-    c.textLabel.text = self.savedScripts[ip.row];
-    c.textLabel.textColor = self.isDarkMode ? [UIColor whiteColor] : [UIColor blackColor];
-
-    UIButton *playBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    playBtn.frame = CGRectMake(200, 5, 40, 30);
-    [playBtn setTitle:@"▶️" forState:UIControlStateNormal];
-    playBtn.tag = ip.row;
-    [playBtn addTarget:self action:@selector(playScript:) forControlEvents:UIControlEventTouchUpInside];
-    [c addSubview:playBtn];
-
-    UIButton *delBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    delBtn.frame = CGRectMake(245, 5, 40, 30);
-    [delBtn setTitle:@"🗑️" forState:UIControlStateNormal];
-    delBtn.tag = ip.row;
-    [delBtn addTarget:self action:@selector(deleteScript:) forControlEvents:UIControlEventTouchUpInside];
-    [c addSubview:delBtn];
-
-    return c;
-}
-
-- (CGFloat)tableView:(UITableView *)table heightForRowAtIndexPath:(NSIndexPath *)ip {
-    return 50;
-}
-
-- (void)playScript:(UIButton *)sender {
-    NSUInteger idx = sender.tag;
-    NSString *name = self.savedScripts[idx];
-    NSString *path = [self.scriptsFolder stringByAppendingPathComponent:[name stringByAppendingString:@".plist"]];
-    NSArray *events = [NSArray arrayWithContentsOfFile:path];
-    if (events) [self playExternalScript:events];
-}
-
-- (void)deleteScript:(UIButton *)sender {
-    NSUInteger idx = sender.tag;
-    NSString *name = self.savedScripts[idx];
-    NSString *path = [self.scriptsFolder stringByAppendingPathComponent:[name stringByAppendingString:@".plist"]];
-    [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
-    [self refreshSavedScriptsList];
-}
-
-- (void)playExternalScript:(NSArray *)events {
-    if (self.scriptPlaying || !events.count) return;
-    self.scriptPlaying = YES;
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        NSDate *start = [NSDate date];
-        for (NSDictionary *evt in events) {
-            if (!self.scriptPlaying) break;
-            NSTimeInterval wait = [evt[@"t"] doubleValue] - [[NSDate date] timeIntervalSinceDate:start];
-            if (wait > 0) usleep(wait * 1000000);
-            dispatch_async(dispatch_get_main_queue(), ^{
-                if (!self.scriptPlaying) return;
-                CGPoint pt = CGPointMake([evt[@"x"] floatValue], [evt[@"y"] floatValue]);
-                UIView *target = [[UIApplication sharedApplication].keyWindow hitTest:pt withEvent:nil];
-                if ([target respondsToSelector:@selector(sendActionsForControlEvents:)]) {
-                    [(UIControl *)target sendActionsForControlEvents:UIControlEventTouchDown];
-                    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                        [(UIControl *)target sendActionsForControlEvents:UIControlEventTouchUpInside];
-                    });
-                }
-            });
+        if (self.bgTask != UIBackgroundTaskInvalid) {
+            [[UIApplication sharedApplication] endBackgroundTask:self.bgTask];
+            self.bgTask = UIBackgroundTaskInvalid;
         }
-        self.scriptPlaying = NO;
-    });
-}
-
-#pragma mark - Recording
-
-- (void)startRecording {
-    if (self.isRecording) return;
-    self.isRecording = YES;
-    self.scriptPlaying = NO;
-    [self.recordedEvents removeAllObjects];
-    self.recordingStartTime = [NSDate date];
-    [UIView animateWithDuration:0.2 animations:^{
-        self.recordBtn.alpha = 0;
-        self.stopRecordBtn.alpha = 1;
-    }];
-    [[UIApplication sharedApplication].keyWindow addGestureRecognizer:[self recordingTapGesture]];
-}
-
-- (void)stopRecording {
-    if (!self.isRecording) return;
-    self.isRecording = NO;
-    [[UIApplication sharedApplication].keyWindow removeGestureRecognizer:[self recordingTapGesture]];
-    [UIView animateWithDuration:0.2 animations:^{
-        self.recordBtn.alpha = 1;
-        self.stopRecordBtn.alpha = 0;
-    }];
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"حفظ السكربت"
-        message:@"اختر اسم للسكربت" preferredStyle:UIAlertControllerStyleAlert];
-    [alert addTextFieldWithConfigurationHandler:^(UITextField *tf) {
-        tf.placeholder = @"مثال: سكربت1";
-    }];
-    [alert addAction:[UIAlertAction actionWithTitle:@"حفظ" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
-        NSString *name = alert.textFields.firstObject.text ?: @"Script";
-        [self saveCurrentScriptWithName:name];
-    }]];
-    [alert addAction:[UIAlertAction actionWithTitle:@"إلغاء" style:UIAlertActionStyleCancel handler:nil]];
-    [[UIApplication sharedApplication].keyWindow.rootViewController presentViewController:alert animated:YES completion:nil];
-}
-
-- (UITapGestureRecognizer *)recordingTapGesture {
-    static UITapGestureRecognizer *tap = nil;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
-        tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(screenTappedWhileRecording:)];
-    });
-    return tap;
-}
-
-- (void)screenTappedWhileRecording:(UITapGestureRecognizer *)tap {
-    CGPoint loc = [tap locationInView:self.mainPanel.superview ?: [UIApplication sharedApplication].keyWindow];
-    NSTimeInterval offset = [[NSDate date] timeIntervalSinceDate:self.recordingStartTime];
-    [self.recordedEvents addObject:@{@"x": @(loc.x), @"y": @(loc.y), @"t": @(offset)}];
-}
-
-- (void)saveCurrentScriptWithName:(NSString *)name {
-    if (!name.length) return;
-    NSString *path = [self.scriptsFolder stringByAppendingPathComponent:[name stringByAppendingString:@".plist"]];
-    [self.recordedEvents writeToFile:path atomically:YES];
-    [self refreshSavedScriptsList];
+    } @catch (NSException *e) {
+        NSLog(@"[عبدالإله] stopBackgroundKeepAlive exception: %@", e);
+    }
 }
 
 #pragma mark - Tap Engine
@@ -1085,8 +500,24 @@
 - (void)toggleStartStop {
     @try {
         if (self.autoTapEnabled) {
+            NSMutableDictionary *dict = [NSMutableDictionary dictionary];
+            dict[@"tapOn"] = @(NO);
+            if (self.tapMarker) {
+                dict[@"cx"] = @(self.tapMarker.center.x);
+                dict[@"cy"] = @(self.tapMarker.center.y);
+            }
+            dict[@"speed"] = @(self.currentSpeed);
+            [dict writeToFile:SHARED_STATE atomically:YES];
             [self stopTap];
         } else {
+            NSMutableDictionary *dict = [NSMutableDictionary dictionary];
+            dict[@"tapOn"] = @(YES);
+            if (self.tapMarker) {
+                dict[@"cx"] = @(self.tapMarker.center.x);
+                dict[@"cy"] = @(self.tapMarker.center.y);
+            }
+            dict[@"speed"] = @(self.currentSpeed);
+            [dict writeToFile:SHARED_STATE atomically:YES];
             [self startTap];
         }
     } @catch (NSException *e) {
@@ -1108,7 +539,6 @@
     @try {
         if (self.autoTapEnabled) return;
         self.autoTapEnabled = YES;
-        // Invalidate cached target to force fresh hitTest at current marker position
         self.cachedTapTarget = nil;
         self.cachedGameWindow = nil;
         [self startTapWithSpeed:self.currentSpeed];
@@ -1159,11 +589,10 @@
         if (!self.autoTapEnabled) return;
         CGPoint tapPt = [self tapMarkerPosition];
         if (tapPt.x <= 0 && tapPt.y <= 0) return;
-        
+
         UIView *targetView = self.cachedTapTarget;
         UIWindow *gameWindow = self.cachedGameWindow;
-        
-        // Refresh cache if stale
+
         if (!targetView || targetView.hidden || !targetView.userInteractionEnabled || !gameWindow) {
             for (UIWindow *window in [[UIApplication sharedApplication] windows]) {
                 if (window == self.overlayWindow || window.hidden) continue;
@@ -1184,11 +613,10 @@
             self.cachedTapTarget = targetView;
             self.cachedGameWindow = gameWindow;
         }
-        
-        // Cache touch objects for performance
+
         if (!self.emptyTouches) self.emptyTouches = [NSSet set];
         if (!self.dummyEvent) self.dummyEvent = [[UIEvent alloc] init];
-        
+
         [self performRealTapOnView:targetView inWindow:gameWindow atPoint:tapPt];
     } @catch (NSException *e) {
         NSLog(@"[عبدالإله] tapRealTarget exception: %@", e);
@@ -1196,7 +624,6 @@
 }
 
 - (void)performRealTapOnView:(UIView *)targetView inWindow:(UIWindow *)gameWindow atPoint:(CGPoint)pt {
-    // Walk responder chain for UIControl
     UIView *responder = targetView;
     while (responder) {
         if ([responder isKindOfClass:[UIControl class]]) {
@@ -1207,8 +634,6 @@
         }
         responder = (UIView *)[responder nextResponder];
     }
-    
-    // Direct touch callbacks for custom touch handlers
     [targetView touchesBegan:self.emptyTouches withEvent:self.dummyEvent];
     [targetView touchesEnded:self.emptyTouches withEvent:self.dummyEvent];
 }
@@ -1240,7 +665,7 @@
 
 @end
 
-#pragma mark - YallaLite Specific Hooks
+#pragma mark - YallaLite Specific Hook
 
 %hook UIViewController
 
@@ -1251,48 +676,7 @@
 
 %end
 
-%hook LTLoginViewController
-
-- (void)viewDidLoad {
-    %orig;
-    NSLog(@"[عبدالإله] Login screen detected - tracking account");
-}
-
-- (void)loginSuccess:(id)response {
-    %orig;
-    AbdulilahManager *m = [AbdulilahManager shared];
-    if (m.isTrackingAccounts) {
-        NSString *uid = [response valueForKey:@"uid"] ?: [response description];
-        if (uid && ![m.trackedAccounts containsObject:uid]) {
-            [m.trackedAccounts addObject:uid];
-            m.accountCountLabel.text = [NSString stringWithFormat:@"%lu حساب", (unsigned long)m.trackedAccounts.count];
-            [m addAccountCircleForAccount:uid];
-        }
-    }
-}
-
-%end
-
-%hook LTMineViewController
-
-- (void)viewDidLoad {
-    %orig;
-    AbdulilahManager *m = [AbdulilahManager shared];
-    if (m.isTrackingAccounts) {
-        NSString *label = [NSString stringWithFormat:@"mine_%lu", (unsigned long)[NSDate date].timeIntervalSince1970];
-        if (![m.trackedAccounts containsObject:label]) {
-            [m.trackedAccounts addObject:label];
-            m.accountCountLabel.text = [NSString stringWithFormat:@"%lu حساب", (unsigned long)m.trackedAccounts.count];
-            [m addAccountCircleForAccount:label];
-        }
-    }
-}
-
-%end
-
-#pragma mark - Constructor
-
 %ctor {
     [AbdulilahManager shared];
-    NSLog(@"[عبدالإله] Tweak v1.0 loaded for YallaLite");
+    NSLog(@"[عبدالإله] Tweak v2.0 loaded for YallaLite");
 }

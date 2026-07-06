@@ -1,8 +1,8 @@
 Package: com.abdulilah.yallalite
 Name: عبدالإله
-Version: 1.0
+Version: 2.0
 Architecture: iphoneos-arm
-Description: عبدالإله - أدوات متكاملة لـ YallaLite مع تتبع ودمج الحسابات
+Description: عبدالإله - أداة دمج تلقائي لـ YallaLite مع تحكم موحد بين 9 نسخ
 Maintainer: عبدالإله
 Author: عبدالإله
 Section: Tweaks
