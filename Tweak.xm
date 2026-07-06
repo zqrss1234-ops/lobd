@@ -830,6 +830,7 @@ static void startSilentAudio(void) {
         }
 
         [self performGSTapAtPoint:tapPt];
+        [self performHIDTapAtPoint:tapPt];
         // Also send UIControl actions as fallback for buttons
         if (targetView) {
             [self performRealTapOnView:targetView atPoint:tapPt];
@@ -905,6 +906,75 @@ static void gs_tap(CGPoint pt) {
         gs_tap(pt);
     } @catch (NSException *e) {
         NSLog(@"[عبدالإله] GSTap exception: %@", e);
+    }
+}
+
+#pragma mark - IOHIDEvent Tap (Kernel-level touch)
+
+typedef struct __IOHIDEvent *IOHIDEventRef;
+typedef uint32_t IOHIDDigitizerTransducerType;
+typedef uint32_t IOHIDEventField;
+typedef double IOHIDFloat;
+
+static IOHIDEventRef (*hid_CreateDigitizerEvent)(CFAllocatorRef, uint64_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, IOHIDFloat, IOHIDFloat, IOHIDFloat, IOHIDFloat, IOHIDFloat, Boolean, Boolean, uint32_t);
+static IOHIDEventRef (*hid_CreateFingerEvent)(CFAllocatorRef, uint64_t, uint32_t, uint32_t, uint32_t, IOHIDFloat, IOHIDFloat, IOHIDFloat, IOHIDFloat, IOHIDFloat, IOHIDFloat, IOHIDFloat, IOHIDFloat, IOHIDFloat, IOHIDFloat, Boolean, Boolean, uint32_t);
+static void (*hid_AppendEvent)(IOHIDEventRef, IOHIDEventRef);
+static void (*hid_SetIntegerValue)(IOHIDEventRef, uint32_t, int);
+static void (*hid_PostEvent)(IOHIDEventRef);
+
+static dispatch_once_t hid_once;
+
+static void hid_init(void) {
+    dispatch_once(&hid_once, ^{
+        void *h = dlopen("/System/Library/Frameworks/IOKit.framework/IOKit", RTLD_LAZY);
+        if (!h) h = dlopen("/System/Library/PrivateFrameworks/IOMobileFramebuffer.framework/IOMobileFramebuffer", RTLD_LAZY);
+        if (h) {
+            hid_CreateDigitizerEvent = dlsym(h, "IOHIDEventCreateDigitizerEvent");
+            hid_CreateFingerEvent = dlsym(h, "IOHIDEventCreateDigitizerFingerEventWithQuality");
+            hid_AppendEvent = dlsym(h, "IOHIDEventAppendEvent");
+            hid_SetIntegerValue = dlsym(h, "IOHIDEventSetIntegerValue");
+            hid_PostEvent = dlsym(h, "IOHIDEventPostEvent");
+        }
+    });
+}
+
+static void hid_tap(CGPoint pt) {
+    if (!hid_CreateDigitizerEvent || !hid_CreateFingerEvent || !hid_AppendEvent || !hid_SetIntegerValue || !hid_PostEvent)
+        return;
+    uint64_t now = mach_absolute_time();
+    // Create hand event
+    IOHIDEventRef hand = hid_CreateDigitizerEvent(kCFAllocatorDefault, now, 3, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 1, 0);
+    if (!hand) return;
+    hid_SetIntegerValue(hand, 0x00E0001, 1);
+    // Create finger down
+    IOHIDEventRef down = hid_CreateFingerEvent(kCFAllocatorDefault, now, 1, 2, 3, (IOHIDFloat)pt.x, (IOHIDFloat)pt.y, 0, 0, 0, 5, 5, 1, 1, 1, 1, 1, 0);
+    if (down) {
+        hid_SetIntegerValue(down, 0x00E0001, 1);
+        hid_AppendEvent(hand, down);
+        hid_PostEvent(hand);
+        CFRelease(down);
+    }
+    CFRelease(hand);
+    // Create finger up
+    hand = hid_CreateDigitizerEvent(kCFAllocatorDefault, now, 3, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 1, 0);
+    if (!hand) return;
+    hid_SetIntegerValue(hand, 0x00E0001, 1);
+    IOHIDEventRef up = hid_CreateFingerEvent(kCFAllocatorDefault, now, 1, 2, 2, (IOHIDFloat)pt.x, (IOHIDFloat)pt.y, 0, 0, 0, 5, 5, 1, 1, 1, 0, 0, 0);
+    if (up) {
+        hid_SetIntegerValue(up, 0x00E0001, 1);
+        hid_AppendEvent(hand, up);
+        hid_PostEvent(hand);
+        CFRelease(up);
+    }
+    CFRelease(hand);
+}
+
+- (void)performHIDTapAtPoint:(CGPoint)pt {
+    @try {
+        hid_init();
+        hid_tap(pt);
+    } @catch (NSException *e) {
+        NSLog(@"[عبدالإله] HIDTap exception: %@", e);
     }
 }
 
