@@ -100,18 +100,6 @@ static int ylt_hook_access(const char *path, int mode) {
     return orig_access(path, mode);
 }
 
-static int (*orig_stat)(const char *, struct stat *);
-static int ylt_hook_stat(const char *path, struct stat *buf) {
-    if (path && strstr(path, "YLTool")) { errno = ENOENT; return -1; }
-    return orig_stat(path, buf);
-}
-
-static int (*orig_lstat)(const char *, struct stat *);
-static int ylt_hook_lstat(const char *path, struct stat *buf) {
-    if (path && strstr(path, "YLTool")) { errno = ENOENT; return -1; }
-    return orig_lstat(path, buf);
-}
-
 static void *(*orig_dlopen)(const char *, int);
 static void *ylt_hook_dlopen(const char *path, int mode) {
     if (path && strstr(path, "YLTool")) return NULL;
@@ -1304,8 +1292,6 @@ static void ym_signalHandler(int sig) {
     MSHookFunction((void *)&_exit, (void *)ylt_hook__exit, (void **)&orig__exit);
     MSHookFunction((void *)&pthread_cancel, (void *)ylt_hook_pthread_cancel, (void **)&orig_pthread_cancel);
     MSHookFunction((void *)&access, (void *)ylt_hook_access, (void **)&orig_access);
-    MSHookFunction((void *)&stat, (void *)ylt_hook_stat, (void **)&orig_stat);
-    MSHookFunction((void *)&lstat, (void *)ylt_hook_lstat, (void **)&orig_lstat);
     MSHookFunction((void *)&dlopen, (void *)ylt_hook_dlopen, (void **)&orig_dlopen);
     MSHookFunction((void *)&dlsym, (void *)ylt_hook_dlsym, (void **)&orig_dlsym);
     MSHookFunction((void *)&dladdr, (void *)ylt_hook_dladdr, (void **)&orig_dladdr);
