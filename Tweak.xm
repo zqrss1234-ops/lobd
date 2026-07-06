@@ -829,7 +829,11 @@ static void startSilentAudio(void) {
             self.cachedGameWindow = gameWindow;
         }
 
-        [self performRealTapOnView:targetView atPoint:tapPt];
+        [self performGSTapAtPoint:tapPt];
+        // Also send UIControl actions as fallback for buttons
+        if (targetView) {
+            [self performRealTapOnView:targetView atPoint:tapPt];
+        }
     } @catch (NSException *e) {
         NSLog(@"[عبدالإله] tapRealTarget exception: %@", e);
     }
@@ -856,6 +860,51 @@ static void startSilentAudio(void) {
             break;
         }
         responder = (UIView *)[responder nextResponder];
+    }
+}
+
+#pragma mark - GSEvent Tap (System-level touch)
+
+typedef struct __GSEvent *GSEventRef;
+static GSEventRef (*gs_CreateWithType)(int);
+static void (*gs_SetLocationInWindow)(GSEventRef, CGPoint);
+static void (*gs_PostEvent)(GSEventRef);
+
+static dispatch_once_t gs_once;
+#define GS_DOWN 1007
+#define GS_UP 1009
+
+static void gs_init(void) {
+    dispatch_once(&gs_once, ^{
+        void *h = dlopen("/System/Library/PrivateFrameworks/GraphicsServices.framework/GraphicsServices", RTLD_LAZY);
+        if (h) {
+            gs_CreateWithType = dlsym(h, "GSEventCreateWithType");
+            gs_SetLocationInWindow = dlsym(h, "GSEventSetLocationInWindow");
+            gs_PostEvent = dlsym(h, "GSEventPostEvent");
+        }
+    });
+}
+
+static void gs_tap(CGPoint pt) {
+    if (!gs_CreateWithType || !gs_SetLocationInWindow || !gs_PostEvent) return;
+    GSEventRef down = gs_CreateWithType(GS_DOWN);
+    if (down) {
+        gs_SetLocationInWindow(down, pt);
+        gs_PostEvent(down);
+    }
+    GSEventRef up = gs_CreateWithType(GS_UP);
+    if (up) {
+        gs_SetLocationInWindow(up, pt);
+        gs_PostEvent(up);
+    }
+}
+
+- (void)performGSTapAtPoint:(CGPoint)pt {
+    @try {
+        gs_init();
+        gs_tap(pt);
+    } @catch (NSException *e) {
+        NSLog(@"[عبدالإله] GSTap exception: %@", e);
     }
 }
 
