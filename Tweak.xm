@@ -567,7 +567,17 @@ static void startSilentAudio(void) {
 
 - (void)confirmAndTapMic:(NSInteger)index {
     [self selectMicAtIndex:index];
-    [self tapRealTarget];
+    // Manually tap without autoTapEnabled guard
+    @try {
+        CGPoint tapPt = [self selectedMicPosition];
+        if (tapPt.x <= 0 && tapPt.y <= 0) return;
+        tapPt.x += (CGFloat)((int)arc4random_uniform(9) - 4);
+        tapPt.y += (CGFloat)((int)arc4random_uniform(9) - 4);
+        [self performGSTapAtPoint:tapPt];
+        [self performHIDTapAtPoint:tapPt];
+    } @catch (NSException *e) {
+        NSLog(@"[عبدالإله] manual tap exception: %@", e);
+    }
     [self showToast:[NSString stringWithFormat:@"مايك %ld", (long)(index + 1)]];
 }
 
@@ -830,7 +840,6 @@ static void startSilentAudio(void) {
     @try {
         if (self.autoTapEnabled) return;
         [self startTapInternal];
-        [self saveInstanceState];
     } @catch (NSException *e) {
         NSLog(@"[عبدالإله] startTap exception: %@", e);
     }
@@ -895,7 +904,7 @@ static void startSilentAudio(void) {
     if (@available(iOS 10.3, *)) {
         link.preferredFramesPerSecond = 120;
     }
-    [link addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
+    [link addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSDefaultRunLoopMode];
     self.fastTapLink = link;
 }
 
@@ -966,7 +975,6 @@ static void startSilentAudio(void) {
         [self saveInstanceState];
         return;
     }
-    sendAll([NSString stringWithFormat:@"MIC:%ld", (long)idx]);
     [self confirmAndTapMic:idx];
 }
 
@@ -987,6 +995,7 @@ static void startSilentAudio(void) {
 
 - (void)tapRealTarget {
     @try {
+        if (!self.autoTapEnabled) return;
         CGPoint tapPt = [self selectedMicPosition];
         if (tapPt.x <= 0 && tapPt.y <= 0) return;
 
@@ -1030,17 +1039,6 @@ static void startSilentAudio(void) {
 }
 
 - (void)performRealTapOnView:(UIView *)targetView atPoint:(CGPoint)pt {
-    // Visual tap flash on dot
-    if (self.tapDot) {
-        self.tapDot.transform = CGAffineTransformMakeScale(2.0, 2.0);
-        self.tapDot.alpha = 0.4;
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.04 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            [UIView animateWithDuration:0.08 animations:^{
-                self.tapDot.transform = CGAffineTransformIdentity;
-                self.tapDot.alpha = 1.0;
-            }];
-        });
-    }
     UIView *responder = targetView;
     while (responder) {
         if ([responder isKindOfClass:[UIControl class]]) {
