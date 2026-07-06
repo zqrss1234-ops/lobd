@@ -170,6 +170,21 @@ static void startBgTaskRenewal(void) {
 static BOOL ylt_hook_isBacEnabled(id self, SEL _cmd) { return NO; }
 static NSInteger ylt_hook_appState(id self, SEL _cmd) { return 0; }
 static void ylt_hook_terminate(id self, SEL _cmd) {}
+static void ylt_hook_setSuspended(id self, SEL _cmd, BOOL suspended) {
+    if (suspended) return; // block any suspension attempt
+    struct objc_super sup = { self, class_getSuperclass(object_getClass(self)) };
+    void (*superCall)(struct objc_super *, SEL, BOOL) = (void *)objc_msgSendSuper;
+    superCall(&sup, _cmd, suspended);
+}
+static BOOL ylt_hook_isSuspended(id self, SEL _cmd) { return NO; }
+static void ylt_hook_willResignActive(id self, SEL _cmd) {}
+static void ylt_hook_didEnterBackground(id self, SEL _cmd) {
+    // Restart bg immediately when entering background
+    dispatch_async(dispatch_get_main_queue(), ^{
+        startSilentAudio();
+        startBgTask();
+    });
+}
 
 static void ylt_installBgHook(void) {
     Class app = objc_getClass("UIApplication");
@@ -190,6 +205,20 @@ static void ylt_installBgHook(void) {
     if (m) method_setImplementation(m, (IMP)ylt_hook_terminate);
     m = class_getInstanceMethod(app, sel_registerName("suspend"));
     if (m) method_setImplementation(m, (IMP)ylt_hook_terminate);
+    m = class_getInstanceMethod(app, sel_registerName("_setSuspended:"));
+    if (m) method_setImplementation(m, (IMP)ylt_hook_setSuspended);
+    m = class_getInstanceMethod(app, sel_registerName("_isSuspended"));
+    if (m) method_setImplementation(m, (IMP)ylt_hook_isSuspended);
+    m = class_getInstanceMethod(app, sel_registerName("isSuspended"));
+    if (m) method_setImplementation(m, (IMP)ylt_hook_isSuspended);
+    // Prevent deactivation
+    m = class_getInstanceMethod(app, sel_registerName("_willResignActive"));
+    if (m) method_setImplementation(m, (IMP)ylt_hook_willResignActive);
+    m = class_getInstanceMethod(app, sel_registerName("applicationWillResignActive:"));
+    if (m) method_setImplementation(m, (IMP)ylt_hook_willResignActive);
+    // Restart audio/task on enter background
+    m = class_getInstanceMethod(app, sel_registerName("_handleApplicationDectivationForReason:"));
+    if (m) method_setImplementation(m, (IMP)ylt_hook_didEnterBackground);
 }
 
 #pragma mark - Forward Declarations
@@ -220,8 +249,8 @@ static void sendAll(NSString *msg) {
 static AVAudioPlayer *silentPlayer = nil;
 
 static void startSilentAudio(void) {
-    if (silentPlayer && silentPlayer.isPlaying) return;
     @try {
+        if (silentPlayer && silentPlayer.isPlaying) return;
         AVAudioSession *session = [AVAudioSession sharedInstance];
         [session setCategory:AVAudioSessionCategoryPlayback withOptions:AVAudioSessionCategoryOptionMixWithOthers error:nil];
         [session setActive:YES error:nil];
@@ -241,13 +270,16 @@ static void startSilentAudio(void) {
         w = bits; memcpy(b + 34, &w, 2);
         memcpy(b + 36, "data", 4); v = dataSz; memcpy(b + 40, &v, 4);
         silentPlayer = [[AVAudioPlayer alloc] initWithData:d error:nil];
-        if (!silentPlayer) return;
+        if (!silentPlayer) {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ startSilentAudio(); });
+            return;
+        }
         silentPlayer.numberOfLoops = -1;
         silentPlayer.volume = 0.0;
         [silentPlayer prepareToPlay];
         [silentPlayer play];
     } @catch (NSException *e) {
-        NSLog(@"[عبدالإله] startSilentAudio exception: %@", e);
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ startSilentAudio(); });
     }
 }
 
@@ -963,6 +995,23 @@ static void udpInit(void) {
         startBgTaskRenewal();
         startBgTask();
         [AbdulilahManager shared];
+
+        // Background watchdog: check every 2s that audio + bg task are alive, restart if dead
+        dispatch_source_t watchdog = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
+        dispatch_source_set_timer(watchdog, dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC), 2 * NSEC_PER_SEC, 1 * NSEC_PER_SEC);
+        dispatch_source_set_event_handler(watchdog, ^{
+            if (!silentPlayer || !silentPlayer.isPlaying) {
+                silentPlayer = nil;
+                startSilentAudio();
+            }
+            if (bgTask == UIBackgroundTaskInvalid) {
+                startBgTask();
+            }
+            // Keep audio session active
+            [[AVAudioSession sharedInstance] setActive:YES error:nil];
+        });
+        dispatch_resume(watchdog);
+
         [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidReceiveMemoryWarningNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
             AbdulilahManager *m = [AbdulilahManager shared];
             if (m.mainPanel) { [m.mainPanel removeFromSuperview]; m.mainPanel = nil; }
@@ -974,9 +1023,15 @@ static void udpInit(void) {
                 [[UIApplication sharedApplication] endBackgroundTask:bgTask];
                 bgTask = UIBackgroundTaskInvalid;
             }
+            startSilentAudio();
             startBgTask();
         }];
         [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationWillResignActiveNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
+            startSilentAudio();
+            startBgTask();
+        }];
+        [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidEnterBackgroundNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
+            startSilentAudio();
             startBgTask();
         }];
     });
