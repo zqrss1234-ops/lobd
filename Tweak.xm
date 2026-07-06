@@ -18,6 +18,18 @@
 #define TEXT_SECONDARY   [UIColor colorWithRed:0.60 green:0.60 blue:0.70 alpha:1.0]
 #define TURBO_COLOR      [UIColor colorWithRed:1.00 green:0.50 blue:0.00 alpha:1.0]
 
+// Overlay window that sits above ALL game windows - passes through untouched touches
+@interface AbdulilahOverlayWindow : UIWindow
+@end
+@implementation AbdulilahOverlayWindow
+- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
+    UIView *hit = [super hitTest:point withEvent:event];
+    // Return nil if no tweak subview was hit => touch passes through to game
+    if (hit == self) return nil;
+    return hit;
+}
+@end
+
 @interface AbdulilahManager : NSObject {
     int moveToken;
     int startToken;
@@ -72,6 +84,9 @@
 
 // Cross-instance sync
 @property (nonatomic, strong) NSTimer *syncTimer;
+
+// Overlay window that stays above all game windows
+@property (nonatomic, strong) AbdulilahOverlayWindow *overlayWindow;
 
 + (instancetype)shared;
 - (void)showFloatingButton;
@@ -136,31 +151,47 @@
     return instance;
 }
 
+- (AbdulilahOverlayWindow *)overlayWindow {
+    if (!_overlayWindow) {
+        _overlayWindow = [[AbdulilahOverlayWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
+        _overlayWindow.windowLevel = UIWindowLevelAlert + 100.0;
+        _overlayWindow.backgroundColor = [UIColor clearColor];
+        _overlayWindow.userInteractionEnabled = YES;
+        _overlayWindow.hidden = NO;
+    }
+    return _overlayWindow;
+}
 - (void)startUIGuard {
     self.uiGuardTimer = [NSTimer scheduledTimerWithTimeInterval:5.0 target:self selector:@selector(checkUI) userInfo:nil repeats:YES];
 }
 
 - (void)checkUI {
-    UIWindow *w = [UIApplication sharedApplication].keyWindow;
-    if (!w) return;
-    if (!self.floatButton || self.floatButton.superview != w) {
+    // Ensure overlay window exists and is on top
+    [self overlayWindow];
+    // Keep overlay at highest level
+    self.overlayWindow.windowLevel = UIWindowLevelAlert + 100.0;
+    // Check floating button
+    if (!self.floatButton || self.floatButton.superview != self.overlayWindow) {
         [self showFloatingButton];
     } else {
-        [w bringSubviewToFront:self.floatButton];
+        [self.overlayWindow bringSubviewToFront:self.floatButton];
     }
+    // Check panel
     if (self.isMenuVisible && self.mainPanel) {
-        if (self.mainPanel.superview != w) {
-            [w addSubview:self.mainPanel];
+        if (self.mainPanel.superview != self.overlayWindow) {
+            [self.overlayWindow addSubview:self.mainPanel];
         }
-        [w bringSubviewToFront:self.mainPanel];
+        [self.overlayWindow bringSubviewToFront:self.mainPanel];
     }
-    if (self.circleContainer && self.circleContainer.superview != w) {
-        [w addSubview:self.circleContainer];
-        [w bringSubviewToFront:self.circleContainer];
+    // Check circle container
+    if (self.circleContainer && self.circleContainer.superview != self.overlayWindow) {
+        [self.overlayWindow addSubview:self.circleContainer];
+        [self.overlayWindow bringSubviewToFront:self.circleContainer];
     }
-    if (self.tapMarker && self.showMarker && self.tapMarker.superview != w) {
-        [w addSubview:self.tapMarker];
-        [w bringSubviewToFront:self.tapMarker];
+    // Check tap marker
+    if (self.tapMarker && self.showMarker && self.tapMarker.superview != self.overlayWindow) {
+        [self.overlayWindow addSubview:self.tapMarker];
+        [self.overlayWindow bringSubviewToFront:self.tapMarker];
     }
 }
 
@@ -178,7 +209,7 @@
         [self.floatButton.superview removeFromSuperview];
         self.floatButton = nil;
     }
-    UIWindow *w = [UIApplication sharedApplication].keyWindow;
+    UIWindow *w = self.overlayWindow;
     UIView *container = [[UIView alloc] initWithFrame:CGRectMake(20, 150, 52, 52)];
     self.floatButton = [UIButton buttonWithType:UIButtonTypeCustom];
     self.floatButton.frame = CGRectMake(0, 0, 52, 52);
@@ -236,7 +267,7 @@
 #pragma mark - Account Circles
 
 - (void)addAccountCircleForAccount:(NSString *)accountID {
-    UIWindow *w = [UIApplication sharedApplication].keyWindow;
+    UIWindow *w = self.overlayWindow;
     if (!self.circleContainer) {
         self.circleContainer = [[UIView alloc] initWithFrame:CGRectMake(100, 300, 200, 200)];
         self.circleContainer.userInteractionEnabled = YES;
@@ -321,7 +352,7 @@
         [self.tapMarker removeFromSuperview];
         self.tapMarker = nil;
     }
-    UIWindow *w = [UIApplication sharedApplication].keyWindow;
+    UIWindow *w = self.overlayWindow;
     CGFloat size = 48;
     UIView *marker = [[UIView alloc] initWithFrame:CGRectMake(w.center.x - size/2, w.center.y - size/2, size, size)];
     marker.backgroundColor = [UIColor clearColor];
@@ -455,7 +486,7 @@
 
 - (void)buildMainPanel {
     if (self.mainPanel) return;
-    UIWindow *w = [UIApplication sharedApplication].keyWindow;
+    UIWindow *w = self.overlayWindow;
     CGFloat pw = 220;
     CGFloat px = (w.bounds.size.width - pw) / 2;
     CGFloat py = 60;
@@ -810,7 +841,7 @@
 #pragma mark - Features Window
 
 - (void)showFeaturesWindow {
-    UIWindow *w = [UIApplication sharedApplication].keyWindow;
+    UIWindow *w = self.overlayWindow;
     UIView *panel = [[UIView alloc] initWithFrame:CGRectMake(50, 120, 280, 350)];
     panel.backgroundColor = self.isDarkMode ? [UIColor colorWithWhite:0.08 alpha:1] : [UIColor colorWithWhite:0.95 alpha:1];
     panel.layer.cornerRadius = 20;
@@ -868,13 +899,13 @@
 }
 
 - (void)closePanel:(UIButton *)sender {
-    [[[UIApplication sharedApplication].keyWindow viewWithTag:8888] removeFromSuperview];
+    [[self.overlayWindow viewWithTag:8888] removeFromSuperview];
 }
 
 #pragma mark - Settings Window
 
 - (void)showSettingsWindow {
-    UIWindow *w = [UIApplication sharedApplication].keyWindow;
+    UIWindow *w = self.overlayWindow;
     UIView *panel = [[UIView alloc] initWithFrame:CGRectMake(50, 150, 280, 300)];
     panel.backgroundColor = self.isDarkMode ? [UIColor colorWithWhite:0.15 alpha:0.97] : [UIColor colorWithWhite:0.95 alpha:0.97];
     panel.layer.cornerRadius = 20;
@@ -913,7 +944,7 @@
 }
 
 - (void)closeSettings {
-    [[[UIApplication sharedApplication].keyWindow viewWithTag:9999] removeFromSuperview];
+    [[self.overlayWindow viewWithTag:9999] removeFromSuperview];
 }
 
 #pragma mark - Scripts Manager
@@ -924,7 +955,7 @@
         self.scriptsPanel = nil;
         return;
     }
-    UIWindow *w = [UIApplication sharedApplication].keyWindow;
+    UIWindow *w = self.overlayWindow;
     CGFloat pw = 300, ph = 420;
     CGFloat px = (w.bounds.size.width - pw) / 2;
     CGFloat py = (w.bounds.size.height - ph) / 2;
@@ -1180,21 +1211,10 @@
     UIWindow *w = [UIApplication sharedApplication].keyWindow;
     CGPoint tapPt = [self tapMarkerPosition];
     if (tapPt.x <= 0 && tapPt.y <= 0) return;
-    // Hide tweak overlays so hitTest finds game views underneath
-    BOOL panelWasHidden = self.mainPanel.hidden;
-    BOOL floatWasHidden = self.floatButton.hidden;
-    BOOL circleWasHidden = self.circleContainer.hidden;
-    self.mainPanel.hidden = YES;
-    self.floatButton.hidden = YES;
-    self.circleContainer.hidden = YES;
-    // All accounts tap at the single marker position
+    // Overlay views are in a separate window above the game, so hitTest on keyWindow won't see them
     [self performFeatureTapsAtPoint:tapPt inWindow:w];
     if (self.autoQueueEnabled) [self tapQueueButtonInWindow:w];
     if (self.drawPredictionEnabled) [self drawPredictionFromPoint:tapPt inWindow:w];
-    // Restore overlays
-    self.mainPanel.hidden = panelWasHidden;
-    self.floatButton.hidden = floatWasHidden;
-    self.circleContainer.hidden = circleWasHidden;
 }
 
 - (void)performFeatureTapsAtPoint:(CGPoint)pt inWindow:(UIWindow *)w {
@@ -1207,10 +1227,7 @@
 }
 
 - (void)performTapAtPoint:(CGPoint)pt inWindow:(UIWindow *)w {
-    BOOL wasEnabled = self.tapMarker.userInteractionEnabled;
-    self.tapMarker.userInteractionEnabled = NO;
     UIView *target = [w hitTest:pt withEvent:nil];
-    self.tapMarker.userInteractionEnabled = wasEnabled;
 
     // Walk responder chain to find a UIControl
     UIView *ctrlView = target;
@@ -1227,10 +1244,7 @@
 }
 
 - (void)performFrozenTapAtPoint:(CGPoint)pt inWindow:(UIWindow *)w {
-    BOOL wasEnabled = self.tapMarker.userInteractionEnabled;
-    self.tapMarker.userInteractionEnabled = NO;
     UIView *target = [w hitTest:pt withEvent:nil];
-    self.tapMarker.userInteractionEnabled = wasEnabled;
 
     // Walk responder chain to find a UIControl
     UIView *ctrlView = target;
@@ -1289,7 +1303,7 @@
 #pragma mark - Toast
 
 - (void)showToast:(NSString *)message {
-    UIWindow *w = [UIApplication sharedApplication].keyWindow;
+    UIWindow *w = self.overlayWindow;
     if (!w) return;
     UIView *existing = [w viewWithTag:7777];
     [existing removeFromSuperview];
