@@ -484,9 +484,11 @@
         for (NSString *acct in savedAccounts) {
             if (![self.trackedAccounts containsObject:acct]) {
                 [self.trackedAccounts addObject:acct];
-                [self rebuildAccountCircles];
                 needsRefresh = YES;
             }
+        }
+        if (needsRefresh) {
+            [self rebuildAccountCircles];
         }
         self.accountCountLabel.text = [NSString stringWithFormat:@"%lu حساب", (unsigned long)self.trackedAccounts.count];
     }
