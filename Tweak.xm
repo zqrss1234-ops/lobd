@@ -628,9 +628,9 @@ static void startSilentAudio(void) {
     y += 28;
 
     UILabel *mergeLabel = [[UILabel alloc] initWithFrame:CGRectMake(12, y, pw - 24, 16)];
-    mergeLabel.text = @"✓ الحسابات مدموجة - مفعلة تلقائي";
+    mergeLabel.text = @"الحسابات مرتبطه";
     mergeLabel.textColor = [UIColor greenColor];
-    mergeLabel.font = [UIFont systemFontOfSize:9];
+    mergeLabel.font = [UIFont systemFontOfSize:10];
     mergeLabel.textAlignment = NSTextAlignmentCenter;
     [self.mainPanel addSubview:mergeLabel];
     y += 18;
@@ -641,7 +641,7 @@ static void startSilentAudio(void) {
     [self.mainPanel addSubview:creditBox];
 
     UILabel *creditLbl = [[UILabel alloc] initWithFrame:CGRectMake(8, 0, pw - 40, 28)];
-    creditLbl.text = @"حقوق البرمجة: عبدالإله";
+    creditLbl.text = @"حقوق عبدالإله فقط.";
     creditLbl.textColor = [PRIMARY_COLOR colorWithAlphaComponent:0.7];
     creditLbl.font = [UIFont boldSystemFontOfSize:9];
     creditLbl.textAlignment = NSTextAlignmentCenter;
