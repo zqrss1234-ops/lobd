@@ -65,7 +65,7 @@
 @property (nonatomic, assign) BOOL antiRecordEnabled;
 @property (nonatomic, assign) float transparencyValue;
 @property (nonatomic, strong) NSTimer *uiGuardTimer;
-@property (nonatomic, strong) NSTimer *bgKeepAliveTimer;
+
 @property (nonatomic, assign) UIBackgroundTaskIdentifier bgTask;
 @property (nonatomic, strong) AVAudioPlayer *silentAudioPlayer;
 
@@ -95,6 +95,7 @@
 @property (nonatomic, weak) UIWindow *cachedGameWindow;
 @property (nonatomic, strong) NSSet *emptyTouches;
 @property (nonatomic, strong) UIEvent *dummyEvent;
+@property (nonatomic, strong) NSTimer *tapTimer;
 
 + (instancetype)shared;
 - (void)showFloatingButton;
@@ -488,7 +489,12 @@
     self.drawPredictionEnabled = [dict[@"drawP"] boolValue];
     // Apply speed
     float spd = [dict[@"speed"] floatValue];
-    if (spd > 0) self.currentSpeed = spd;
+    if (spd > 0) {
+        self.currentSpeed = spd;
+        if (self.autoTapEnabled) {
+            [self restartTapWithSpeed:spd];
+        }
+    }
     // Load tracked accounts and rebuild circles
     NSArray *savedAccounts = dict[@"accounts"];
     if ([savedAccounts isKindOfClass:[NSArray class]] && savedAccounts.count > 0) {
@@ -1259,13 +1265,9 @@
 }
 
 - (void)restartTapWithSpeed:(float)speed {
-    [self stopTap];
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        if (!self.autoTapEnabled) {
-            self.autoTapEnabled = YES;
-            [self startTapWithSpeed:speed];
-        }
-    });
+    [self.tapTimer invalidate];
+    self.tapTimer = nil;
+    [self startTapWithSpeed:speed];
 }
 
 - (void)toggleStartStop {
@@ -1300,16 +1302,25 @@
 }
 
 - (void)startTapWithSpeed:(float)speed {
-    self.autoTapEnabled = YES;
     if (speed < 0.001f) speed = 0.001f;
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        while (self.autoTapEnabled) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                if (self.autoTapEnabled) [self tapRealTarget];
-            });
-            usleep((useconds_t)(speed * 1000000));
-        }
-    });
+    [self.tapTimer invalidate];
+    self.tapTimer = [NSTimer scheduledTimerWithTimeInterval:speed target:self selector:@selector(tapTimerFired) userInfo:nil repeats:YES];
+    [[NSRunLoop mainRunLoop] addTimer:self.tapTimer forMode:NSDefaultRunLoopMode];
+}
+
+- (void)tapTimerFired {
+    if (!self.autoTapEnabled) {
+        [self.tapTimer invalidate];
+        self.tapTimer = nil;
+        return;
+    }
+    [self tapRealTarget];
+    // Extra taps for features
+    if (self.goldenShotEnabled) [self tapRealTarget];
+    if (self.freezeLinesEnabled) { [self tapRealTarget]; [self tapRealTarget]; }
+    if (self.antiRecordEnabled) {
+        for (int i = 0; i < 8; i++) [self tapRealTarget];
+    }
 }
 
 - (void)stopTap {
@@ -1326,6 +1337,8 @@
 
 - (void)stopTapInternal {
     self.autoTapEnabled = NO;
+    [self.tapTimer invalidate];
+    self.tapTimer = nil;
     if (self.toggleBtn) {
         [self.toggleBtn setTitle:@"تشغيل" forState:UIControlStateNormal];
         self.toggleBtn.backgroundColor = SUCCESS_COLOR;
@@ -1367,11 +1380,6 @@
     if (!self.dummyEvent) self.dummyEvent = [[UIEvent alloc] init];
     
     [self performRealTapOnView:targetView inWindow:gameWindow atPoint:tapPt];
-    if (self.goldenShotEnabled) [self performRealTapOnView:targetView inWindow:gameWindow atPoint:tapPt];
-    if (self.freezeLinesEnabled) [self performFrozenRealTapOnView:targetView inWindow:gameWindow atPoint:tapPt];
-    if (self.antiRecordEnabled) {
-        for (int i = 0; i < 8; i++) [self performRealTapOnView:targetView inWindow:gameWindow atPoint:tapPt];
-    }
     if (self.autoQueueEnabled) [self tapQueueButtonInView:targetView];
     if (self.drawPredictionEnabled) [self drawPredictionFromPoint:tapPt inWindow:gameWindow];
 }
@@ -1390,22 +1398,6 @@
     }
     
     // Direct touch callbacks for custom touch handlers
-    [targetView touchesBegan:self.emptyTouches withEvent:self.dummyEvent];
-    [targetView touchesEnded:self.emptyTouches withEvent:self.dummyEvent];
-}
-
-- (void)performFrozenRealTapOnView:(UIView *)targetView inWindow:(UIWindow *)gameWindow atPoint:(CGPoint)pt {
-    UIView *responder = targetView;
-    while (responder) {
-        if ([responder isKindOfClass:[UIControl class]]) {
-            UIControl *ctrl = (UIControl *)responder;
-            [ctrl sendActionsForControlEvents:UIControlEventTouchDown];
-            [ctrl sendActionsForControlEvents:UIControlEventTouchUpInside];
-            break;
-        }
-        responder = (UIView *)[responder nextResponder];
-    }
-    
     [targetView touchesBegan:self.emptyTouches withEvent:self.dummyEvent];
     [targetView touchesEnded:self.emptyTouches withEvent:self.dummyEvent];
 }
