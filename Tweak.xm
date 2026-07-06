@@ -2,8 +2,12 @@
 #import <QuartzCore/QuartzCore.h>
 #import <objc/runtime.h>
 #import <AudioToolbox/AudioToolbox.h>
+#import <notify.h>
 
 #define SHARED_STATE   @"/var/mobile/Library/Preferences/com.abdulilah.state.plist"
+#define NOTIFY_MOVE    "com.abdulilah.circleMoved"
+#define NOTIFY_START   "com.abdulilah.tapStarted"
+#define NOTIFY_STOP    "com.abdulilah.tapStopped"
 
 #define PRIMARY_COLOR    [UIColor colorWithRed:0.00 green:0.60 blue:1.00 alpha:1.0]
 #define SUCCESS_COLOR    [UIColor colorWithRed:0.00 green:0.50 blue:1.00 alpha:1.0]
@@ -14,7 +18,12 @@
 #define TEXT_SECONDARY   [UIColor colorWithRed:0.60 green:0.60 blue:0.70 alpha:1.0]
 #define TURBO_COLOR      [UIColor colorWithRed:1.00 green:0.50 blue:0.00 alpha:1.0]
 
-@interface AbdulilahManager : NSObject
+@interface AbdulilahManager : NSObject {
+    int moveToken;
+    int startToken;
+    int stopToken;
+    int featuresToken;
+}
 
 @property (nonatomic, strong) UIView *mainPanel;
 @property (nonatomic, strong) UIButton *floatButton;
@@ -93,8 +102,30 @@
         instance.showMarker = NO;
         [instance prepareScriptsFolder];
         [instance startUIGuard];
-        // Cross-instance sync timer (0.3s interval) - reads shared state and applies to all instances
-        instance.syncTimer = [NSTimer timerWithTimeInterval:0.3 target:instance selector:@selector(syncTimerFired) userInfo:nil repeats:YES];
+        // Register Darwin notify callbacks for cross-instance sync
+        __weak AbdulilahManager *weakInst = instance;
+        notify_register_dispatch(NOTIFY_MOVE, &instance->moveToken, dispatch_get_main_queue(), ^(int t) {
+            AbdulilahManager *strong = weakInst;
+            if (!strong) return;
+            uint64_t state = 0;
+            notify_get_state(t, &state);
+            CGFloat x = (CGFloat)((int32_t)(state >> 32)) / 10.0;
+            CGFloat y = (CGFloat)((int32_t)(state & 0xFFFFFFFF)) / 10.0;
+            if (x > 0 && y > 0 && strong.tapMarker) {
+                strong.tapMarker.center = CGPointMake(x, y);
+            }
+        });
+        notify_register_dispatch(NOTIFY_START, &instance->startToken, dispatch_get_main_queue(), ^(int t) {
+            [(AbdulilahManager *)weakInst startTapInternal];
+        });
+        notify_register_dispatch(NOTIFY_STOP, &instance->stopToken, dispatch_get_main_queue(), ^(int t) {
+            [(AbdulilahManager *)weakInst stopTapInternal];
+        });
+        notify_register_dispatch("com.abdulilah.featuresChanged", &instance->featuresToken, dispatch_get_main_queue(), ^(int t) {
+            [(AbdulilahManager *)weakInst loadInstanceState];
+        });
+        // Backup sync timer (0.5s) reads shared plist for features + fallback
+        instance.syncTimer = [NSTimer timerWithTimeInterval:0.5 target:instance selector:@selector(syncTimerFired) userInfo:nil repeats:YES];
         [[NSRunLoop mainRunLoop] addTimer:instance.syncTimer forMode:NSDefaultRunLoopMode];
         [[NSRunLoop mainRunLoop] addTimer:instance.syncTimer forMode:UITrackingRunLoopMode];
         // Auto-show marker after window is ready
@@ -320,6 +351,15 @@
     [w addSubview:marker];
     self.tapMarker = marker;
     self.showMarker = YES;
+    // Load saved position from file (initial sync on startup)
+    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:SHARED_STATE];
+    if (dict[@"cx"] && dict[@"cy"]) {
+        CGFloat x = [dict[@"cx"] floatValue];
+        CGFloat y = [dict[@"cy"] floatValue];
+        if (x > 0 && y > 0) {
+            marker.center = CGPointMake(x, y);
+        }
+    }
     [self loadInstanceState];
 
     marker.alpha = 0;
@@ -349,7 +389,13 @@
     v.center = CGPointMake(v.center.x + t.x, v.center.y + t.y);
     [p setTranslation:CGPointZero inView:v.superview];
     if (p.state == UIGestureRecognizerStateEnded || p.state == UIGestureRecognizerStateChanged) {
-        [self saveInstanceState];
+        // Notify all instances with encoded position
+        uint64_t state = ((uint64_t)(int32_t)(v.center.x * 10) << 32) | ((uint64_t)(int32_t)(v.center.y * 10) & 0xFFFFFFFF);
+        notify_set_state(moveToken, state);
+        notify_post(NOTIFY_MOVE);
+        if (p.state == UIGestureRecognizerStateEnded) {
+            [self saveInstanceState];
+        }
     }
 }
 
@@ -380,14 +426,7 @@
 - (void)loadInstanceState {
     NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:SHARED_STATE];
     if (!dict) return;
-    // Apply circle position
-    if (dict[@"cx"] && dict[@"cy"] && self.tapMarker) {
-        CGFloat x = [dict[@"cx"] floatValue];
-        CGFloat y = [dict[@"cy"] floatValue];
-        if (x > 0 && y > 0) {
-            self.tapMarker.center = CGPointMake(x, y);
-        }
-    }
+    // Position sync is handled by NOTIFY_MOVE Darwin notification - skip here
     // Apply auto-tap state
     BOOL shouldTap = [dict[@"tapOn"] boolValue];
     if (shouldTap && !self.autoTapEnabled) {
@@ -823,6 +862,7 @@
     BOOL current = [[self valueForKey:key] boolValue];
     [self setValue:@(!current) forKey:key];
     [self saveInstanceState];
+    notify_post("com.abdulilah.featuresChanged");
     [self closePanel:nil];
     [self showFeaturesWindow];
 }
@@ -1070,6 +1110,8 @@
     self.currentSpeed = val;
     self.speedLabel.text = [NSString stringWithFormat:@"السرعة: %.3f ث", self.currentSpeed];
     if (self.autoTapEnabled) [self restartTapWithSpeed:self.currentSpeed];
+    [self saveInstanceState];
+    notify_post("com.abdulilah.featuresChanged");
 }
 
 - (void)restartTapWithSpeed:(float)speed {
@@ -1094,6 +1136,7 @@
     if (self.autoTapEnabled) return;
     [self startTapInternal];
     [self saveInstanceState];
+    notify_post(NOTIFY_START);
 }
 
 - (void)startTapInternal {
@@ -1121,6 +1164,7 @@
 - (void)stopTap {
     [self stopTapInternal];
     [self saveInstanceState];
+    notify_post(NOTIFY_STOP);
 }
 
 - (void)stopTapInternal {
