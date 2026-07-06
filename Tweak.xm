@@ -2,6 +2,7 @@
 #import <QuartzCore/QuartzCore.h>
 #import <objc/runtime.h>
 #import <AudioToolbox/AudioToolbox.h>
+#import <AVFoundation/AVFoundation.h>
 #import <notify.h>
 
 #define SHARED_STATE   @"/var/mobile/Library/Preferences/com.abdulilah.state.plist"
@@ -66,6 +67,7 @@
 @property (nonatomic, strong) NSTimer *uiGuardTimer;
 @property (nonatomic, strong) NSTimer *bgKeepAliveTimer;
 @property (nonatomic, assign) UIBackgroundTaskIdentifier bgTask;
+@property (nonatomic, strong) AVAudioPlayer *silentAudioPlayer;
 
 // Account tracking
 @property (nonatomic, strong) NSMutableArray *trackedAccounts;
@@ -800,10 +802,10 @@
     });
 }
 
-#pragma mark - Background Keep Alive
+#pragma mark - Background Keep Alive (Silent Audio)
 
 - (void)toggleBackgroundKeepAlive:(UIButton *)sender {
-    if (self.bgKeepAliveTimer) {
+    if (self.silentAudioPlayer && self.silentAudioPlayer.isPlaying) {
         [self stopBackgroundKeepAlive];
         sender.backgroundColor = [UIColor blackColor];
         [sender setTitle:@"OFF" forState:UIControlStateNormal];
@@ -814,28 +816,84 @@
     }
 }
 
-- (void)startBackgroundKeepAlive {
-    self.bgTask = [[UIApplication sharedApplication] beginBackgroundTaskWithName:@"AbdulilahKeepAlive" expirationHandler:^{
-        [[UIApplication sharedApplication] endBackgroundTask:self.bgTask];
-        self.bgTask = UIBackgroundTaskInvalid;
-        [self startBackgroundKeepAlive];
-    }];
-    self.bgKeepAliveTimer = [NSTimer scheduledTimerWithTimeInterval:10.0 target:self selector:@selector(keepAlivePing) userInfo:nil repeats:YES];
-    [self showToast:@"🔋 وضع الخلفية نشط"];
+- (NSData *)generateSilentWAV {
+    // 2 seconds of silence: 44100 Hz, 16-bit mono PCM
+    int sampleRate = 44100;
+    short numChannels = 1;
+    short bitsPerSample = 16;
+    int numSamples = sampleRate * 2; // 2 seconds
+    int dataSize = numSamples * (bitsPerSample / 8);
+    int fileSize = 44 + dataSize; // 44 byte header
+    
+    NSMutableData *wav = [NSMutableData dataWithLength:fileSize];
+    unsigned char *bytes = (unsigned char *)[wav mutableBytes];
+    int offset = 0;
+    
+    // RIFF header
+    memcpy(bytes + offset, "RIFF", 4); offset += 4;
+    uint32_t chunkSize = fileSize - 8;
+    memcpy(bytes + offset, &chunkSize, 4); offset += 4;
+    memcpy(bytes + offset, "WAVE", 4); offset += 4;
+    
+    // fmt subchunk
+    memcpy(bytes + offset, "fmt ", 4); offset += 4;
+    uint32_t subchunk1Size = 16;
+    memcpy(bytes + offset, &subchunk1Size, 4); offset += 4;
+    uint16_t audioFormat = 1; // PCM
+    memcpy(bytes + offset, &audioFormat, 2); offset += 2;
+    memcpy(bytes + offset, &numChannels, 2); offset += 2;
+    memcpy(bytes + offset, &sampleRate, 4); offset += 4;
+    uint32_t byteRate = sampleRate * numChannels * (bitsPerSample / 8);
+    memcpy(bytes + offset, &byteRate, 4); offset += 4;
+    uint16_t blockAlign = numChannels * (bitsPerSample / 8);
+    memcpy(bytes + offset, &blockAlign, 2); offset += 2;
+    memcpy(bytes + offset, &bitsPerSample, 2); offset += 2;
+    
+    // data subchunk
+    memcpy(bytes + offset, "data", 4); offset += 4;
+    memcpy(bytes + offset, &dataSize, 4); offset += 4;
+    // Rest is silence (already zeroed)
+    
+    return wav;
 }
 
-- (void)keepAlivePing {
-    // Silent keep-alive - no sound, keeps background task active
+- (void)startBackgroundKeepAlive {
+    // Begin background task
+    self.bgTask = [[UIApplication sharedApplication] beginBackgroundTaskWithName:@"AbdulilahKeepAlive" expirationHandler:^{
+        [self.silentAudioPlayer stop];
+        self.silentAudioPlayer = nil;
+        [self startBackgroundKeepAlive];
+    }];
+    
+    // Set up silent audio
+    NSError *err = nil;
+    AVAudioSession *session = [AVAudioSession sharedInstance];
+    [session setCategory:AVAudioSessionCategoryPlayback withOptions:AVAudioSessionCategoryOptionMixWithOthers error:&err];
+    [session setActive:YES error:&err];
+    
+    if (!self.silentAudioPlayer) {
+        NSData *silentData = [self generateSilentWAV];
+        self.silentAudioPlayer = [[AVAudioPlayer alloc] initWithData:silentData error:&err];
+        self.silentAudioPlayer.numberOfLoops = -1;
+        self.silentAudioPlayer.volume = 0.0;
+    }
+    [self.silentAudioPlayer play];
+    
+    [self showToast:@"🔋 الخلفية نشطة (صامت)"];
 }
 
 - (void)stopBackgroundKeepAlive {
-    [self.bgKeepAliveTimer invalidate];
-    self.bgKeepAliveTimer = nil;
+    [self.silentAudioPlayer stop];
+    self.silentAudioPlayer = nil;
+    
+    AVAudioSession *session = [AVAudioSession sharedInstance];
+    [session setActive:NO error:nil];
+    
     if (self.bgTask != UIBackgroundTaskInvalid) {
         [[UIApplication sharedApplication] endBackgroundTask:self.bgTask];
         self.bgTask = UIBackgroundTaskInvalid;
     }
-    [self showToast:@"🔋 تم إيقاف وضع الخلفية"];
+    [self showToast:@"🔋 تم إيقاف الخلفية"];
 }
 
 #pragma mark - Features Window
@@ -1208,70 +1266,119 @@
 
 - (void)tapRealTarget {
     if (!self.autoTapEnabled) return;
-    UIWindow *w = [UIApplication sharedApplication].keyWindow;
     CGPoint tapPt = [self tapMarkerPosition];
     if (tapPt.x <= 0 && tapPt.y <= 0) return;
-    // Overlay views are in a separate window above the game, so hitTest on keyWindow won't see them
-    [self performFeatureTapsAtPoint:tapPt inWindow:w];
-    if (self.autoQueueEnabled) [self tapQueueButtonInWindow:w];
-    if (self.drawPredictionEnabled) [self drawPredictionFromPoint:tapPt inWindow:w];
-}
-
-- (void)performFeatureTapsAtPoint:(CGPoint)pt inWindow:(UIWindow *)w {
-    [self performTapAtPoint:pt inWindow:w];
-    if (self.goldenShotEnabled) [self performTapAtPoint:pt inWindow:w];
-    if (self.freezeLinesEnabled) [self performFrozenTapAtPoint:pt inWindow:w];
+    
+    // Scan ALL windows (except our overlay) to find the game's deepest view at tap point
+    // This works even when the game room uses a different window than keyWindow
+    UIWindow *gameWindow = nil;
+    UIView *targetView = nil;
+    for (UIWindow *window in [[UIApplication sharedApplication] windows]) {
+        if (window == self.overlayWindow || window.hidden) continue;
+        if (window.windowLevel < UIWindowLevelNormal) continue;
+        UIView *hit = [window hitTest:tapPt withEvent:nil];
+        if (hit && hit != window && !hit.hidden && hit.userInteractionEnabled) {
+            targetView = hit;
+            gameWindow = window;
+            break;
+        }
+    }
+    if (!targetView) {
+        // Fallback: try keyWindow
+        UIWindow *w = [UIApplication sharedApplication].keyWindow;
+        targetView = [w hitTest:tapPt withEvent:nil];
+        gameWindow = w;
+    }
+    if (!targetView || targetView == gameWindow) return;
+    
+    [self performRealTapOnView:targetView inWindow:gameWindow atPoint:tapPt];
+    if (self.goldenShotEnabled) [self performRealTapOnView:targetView inWindow:gameWindow atPoint:tapPt];
+    if (self.freezeLinesEnabled) [self performFrozenRealTapOnView:targetView inWindow:gameWindow atPoint:tapPt];
     if (self.antiRecordEnabled) {
-        for (int i = 0; i < 8; i++) [self performTapAtPoint:pt inWindow:w];
+        for (int i = 0; i < 8; i++) [self performRealTapOnView:targetView inWindow:gameWindow atPoint:tapPt];
     }
+    if (self.autoQueueEnabled) [self tapQueueButtonInView:targetView];
+    if (self.drawPredictionEnabled) [self drawPredictionFromPoint:tapPt inWindow:gameWindow];
 }
 
-- (void)performTapAtPoint:(CGPoint)pt inWindow:(UIWindow *)w {
-    UIView *target = [w hitTest:pt withEvent:nil];
-
-    // Walk responder chain to find a UIControl
-    UIView *ctrlView = target;
-    while (ctrlView && ![ctrlView isKindOfClass:[UIControl class]]) {
-        ctrlView = (UIView *)[ctrlView nextResponder];
+- (void)performRealTapOnView:(UIView *)targetView inWindow:(UIWindow *)gameWindow atPoint:(CGPoint)pt {
+    // Cancel any gesture on overlay
+    self.tapMarker.userInteractionEnabled = NO;
+    
+    // Method 1: Send touch events directly to the view
+    // This simulates a real finger press more accurately than sendActions
+    UIEvent *touchEvent = nil;
+    
+    // Create a UITouch-like simulation by directly calling touch handling methods
+    BOOL handled = NO;
+    
+    // Walk responder chain for UIControl
+    UIView *responder = targetView;
+    while (responder) {
+        if ([responder isKindOfClass:[UIControl class]]) {
+            UIControl *ctrl = (UIControl *)responder;
+            [ctrl sendActionsForControlEvents:UIControlEventTouchDown];
+            [ctrl sendActionsForControlEvents:UIControlEventTouchUpInside];
+            handled = YES;
+            break;
+        }
+        responder = (UIView *)[responder nextResponder];
     }
-    if ([ctrlView isKindOfClass:[UIControl class]]) {
-        UIControl *ctrl = (UIControl *)ctrlView;
-        [ctrl sendActionsForControlEvents:UIControlEventTouchUpInside];
-    } else if (target) {
-        // Send generic action up the responder chain
-        [[UIApplication sharedApplication] sendAction:@selector(tapAction:) to:nil from:target forEvent:nil];
+    
+    // Method 2: Direct touch callbacks on the target view
+    // This catches views that override touchesBegan:/touchesEnded:
+    if (!handled) {
+        [targetView touchesBegan:nil withEvent:nil];
+        [targetView touchesEnded:nil withEvent:nil];
     }
+    
+    // Method 3: sendAction up responder chain (broadcast event)
+    [[UIApplication sharedApplication] sendAction:@selector(tapAction:) to:nil from:targetView forEvent:nil];
+    
+    self.tapMarker.userInteractionEnabled = YES;
 }
 
-- (void)performFrozenTapAtPoint:(CGPoint)pt inWindow:(UIWindow *)w {
-    UIView *target = [w hitTest:pt withEvent:nil];
-
-    // Walk responder chain to find a UIControl
-    UIView *ctrlView = target;
-    while (ctrlView && ![ctrlView isKindOfClass:[UIControl class]]) {
-        ctrlView = (UIView *)[ctrlView nextResponder];
+- (void)performFrozenRealTapOnView:(UIView *)targetView inWindow:(UIWindow *)gameWindow atPoint:(CGPoint)pt {
+    self.tapMarker.userInteractionEnabled = NO;
+    
+    UIView *responder = targetView;
+    while (responder) {
+        if ([responder isKindOfClass:[UIControl class]]) {
+            UIControl *ctrl = (UIControl *)responder;
+            [ctrl sendActionsForControlEvents:UIControlEventTouchDown];
+            [ctrl sendActionsForControlEvents:UIControlEventTouchUpInside];
+            break;
+        }
+        responder = (UIView *)[responder nextResponder];
     }
-    if ([ctrlView isKindOfClass:[UIControl class]]) {
-        UIControl *ctrl = (UIControl *)ctrlView;
-        [ctrl sendActionsForControlEvents:UIControlEventTouchDown];
-        [ctrl sendActionsForControlEvents:UIControlEventTouchUpInside];
-    } else if (target) {
-        [[UIApplication sharedApplication] sendAction:@selector(tapAction:) to:nil from:target forEvent:nil];
-    }
+    
+    [targetView touchesBegan:nil withEvent:nil];
+    [targetView touchesEnded:nil withEvent:nil];
+    
+    [[UIApplication sharedApplication] sendAction:@selector(tapAction:) to:nil from:targetView forEvent:nil];
+    
+    self.tapMarker.userInteractionEnabled = YES;
 }
 
-- (void)tapQueueButtonInWindow:(UIView *)w {
-    for (UIView *sub in w.subviews) {
+- (void)tapQueueButtonInView:(UIView *)rootView {
+    // Search the key window for buttons with game-related titles
+    UIWindow *keyW = [UIApplication sharedApplication].keyWindow;
+    [self searchForQueueButtonInView:keyW];
+}
+
+- (void)searchForQueueButtonInView:(UIView *)view {
+    for (UIView *sub in view.subviews) {
         if ([sub isKindOfClass:[UIButton class]]) {
             UIButton *btn = (UIButton *)sub;
             NSString *title = [btn titleForState:UIControlStateNormal] ?: @"";
             if ([title containsString:@"جاهز"] || [title containsString:@"موافق"] ||
                 [title containsString:@"Ready"] || [title containsString:@"OK"] ||
                 [title containsString:@"انضم"] || [title containsString:@"Join"]) {
+                [btn sendActionsForControlEvents:UIControlEventTouchDown];
                 [btn sendActionsForControlEvents:UIControlEventTouchUpInside];
             }
         }
-        [self tapQueueButtonInWindow:sub];
+        [self searchForQueueButtonInView:sub];
     }
 }
 
