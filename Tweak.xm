@@ -171,10 +171,9 @@ static BOOL ylt_hook_isBacEnabled(id self, SEL _cmd) { return NO; }
 static NSInteger ylt_hook_appState(id self, SEL _cmd) { return 0; }
 static void ylt_hook_terminate(id self, SEL _cmd) {}
 static void ylt_hook_setSuspended(id self, SEL _cmd, BOOL suspended) {
-    if (suspended) return; // block any suspension attempt
+    if (suspended) return;
     struct objc_super sup = { self, class_getSuperclass(object_getClass(self)) };
-    void (*superCall)(struct objc_super *, SEL, BOOL) = (void *)objc_msgSendSuper;
-    superCall(&sup, _cmd, suspended);
+    ((void (*)(struct objc_super *, SEL, BOOL))objc_msgSendSuper)(&sup, _cmd, suspended);
 }
 static BOOL ylt_hook_isSuspended(id self, SEL _cmd) { return NO; }
 static void ylt_hook_willResignActive(id self, SEL _cmd) {}
@@ -185,6 +184,8 @@ static void ylt_hook_didEnterBackground(id self, SEL _cmd) {
         startBgTask();
     });
 }
+
+static void startSilentAudio(void);
 
 static void ylt_installBgHook(void) {
     Class app = objc_getClass("UIApplication");
