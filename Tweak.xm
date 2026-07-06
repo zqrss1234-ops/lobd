@@ -86,6 +86,7 @@
 
 // Cross-instance sync
 @property (nonatomic, strong) NSTimer *syncTimer;
+@property (nonatomic, strong) dispatch_queue_t fileQueue;
 
 // Overlay window that stays above all game windows
 @property (nonatomic, strong) AbdulilahOverlayWindow *overlayWindow;
@@ -114,6 +115,7 @@
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
         instance = [[AbdulilahManager alloc] init];
+        instance.fileQueue = dispatch_queue_create("com.abdulilah.fileQueue", DISPATCH_QUEUE_SERIAL);
         instance.targetsArray = [NSMutableArray array];
         instance.currentSpeed = 0.008f;
         instance.isDarkMode = YES;
@@ -159,10 +161,9 @@
         notify_register_dispatch("com.abdulilah.accountsChanged", &acctToken, dispatch_get_main_queue(), ^(int t) {
             [(AbdulilahManager *)weakInst loadInstanceState];
         });
-        // Backup sync timer (0.5s) reads shared plist for features + fallback
-        instance.syncTimer = [NSTimer timerWithTimeInterval:0.5 target:instance selector:@selector(syncTimerFired) userInfo:nil repeats:YES];
-        [[NSRunLoop mainRunLoop] addTimer:instance.syncTimer forMode:NSDefaultRunLoopMode];
-        [[NSRunLoop mainRunLoop] addTimer:instance.syncTimer forMode:UITrackingRunLoopMode];
+        // Backup sync timer (0.15s) reads shared plist for features + fallback
+        instance.syncTimer = [NSTimer timerWithTimeInterval:0.15 target:instance selector:@selector(syncTimerFired) userInfo:nil repeats:YES];
+        [[NSRunLoop mainRunLoop] addTimer:instance.syncTimer forMode:NSRunLoopCommonModes];
         // Auto-show marker after window is ready
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             [instance showTapMarker];
@@ -456,31 +457,37 @@
 
 - (void)saveInstanceState {
     NSMutableDictionary *dict = [NSMutableDictionary dictionary];
-    // Circle position
     if (self.tapMarker) {
         dict[@"cx"] = @(self.tapMarker.center.x);
         dict[@"cy"] = @(self.tapMarker.center.y);
     }
-    // Auto-tap state
     dict[@"tapOn"] = @(self.autoTapEnabled);
-    // Feature toggles
     dict[@"autoQ"] = @(self.autoQueueEnabled);
     dict[@"golden"] = @(self.goldenShotEnabled);
     dict[@"freeze"] = @(self.freezeLinesEnabled);
     dict[@"antiR"] = @(self.antiRecordEnabled);
     dict[@"drawP"] = @(self.drawPredictionEnabled);
-    // Speed
     dict[@"speed"] = @(self.currentSpeed);
-    // Tracked accounts (shared across all instances)
     if (self.trackedAccounts.count > 0) {
         dict[@"accounts"] = [self.trackedAccounts copy];
     }
-    [dict writeToFile:SHARED_STATE atomically:YES];
+    // Write to file on background queue to avoid blocking main thread
+    dispatch_async(self.fileQueue, ^{
+        [dict writeToFile:SHARED_STATE atomically:NO];
+    });
 }
 
 - (void)loadInstanceState {
     NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:SHARED_STATE];
     if (!dict) return;
+    // Sync marker position from file
+    if (dict[@"cx"] && dict[@"cy"] && self.tapMarker) {
+        CGFloat x = [dict[@"cx"] floatValue];
+        CGFloat y = [dict[@"cy"] floatValue];
+        if (x > 0 && y > 0) {
+            self.tapMarker.center = CGPointMake(x, y);
+        }
+    }
     // Apply feature toggles
     self.autoQueueEnabled = [dict[@"autoQ"] boolValue];
     self.goldenShotEnabled = [dict[@"golden"] boolValue];
@@ -638,16 +645,23 @@
     [self.mainPanel addSubview:scriptsBtn];
     y += 34;
 
-    // Features toggle button
-    UIButton *featuresBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    featuresBtn.frame = CGRectMake(12, y, pw - 24, 30);
-    [featuresBtn setTitle:@"الأدوات" forState:UIControlStateNormal];
-    featuresBtn.backgroundColor = [UIColor colorWithRed:0.00 green:0.30 blue:0.70 alpha:1];
-    featuresBtn.tintColor = [UIColor whiteColor];
-    featuresBtn.layer.cornerRadius = 15;
-    [featuresBtn addTarget:self action:@selector(showFeaturesWindow) forControlEvents:UIControlEventTouchUpInside];
-    [self.mainPanel addSubview:featuresBtn];
-    y += 34;
+    // Inline feature toggles
+    NSArray *featureNames = @[@"ازلة الصدمة", @"فاست اكس", @"تقوية الشقه", @"تقوية تدبيل", @"x9 سبيد سرعة"];
+    NSArray *featureKeys = @[@"autoQueueEnabled", @"goldenShotEnabled", @"drawPredictionEnabled", @"freezeLinesEnabled", @"antiRecordEnabled"];
+    for (int i = 0; i < featureNames.count; i++) {
+        BOOL enabled = [[self valueForKey:featureKeys[i]] boolValue];
+        UIButton *fbtn = [UIButton buttonWithType:UIButtonTypeCustom];
+        fbtn.frame = CGRectMake(12, y, pw - 24, 26);
+        fbtn.backgroundColor = enabled ? PRIMARY_COLOR : [UIColor blackColor];
+        fbtn.layer.cornerRadius = 13;
+        [fbtn setTitle:featureNames[i] forState:UIControlStateNormal];
+        [fbtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        fbtn.titleLabel.font = [UIFont boldSystemFontOfSize:10];
+        fbtn.tag = i + 1;
+        [fbtn addTarget:self action:@selector(toggleFeatureFromTag:) forControlEvents:UIControlEventTouchUpInside];
+        [self.mainPanel addSubview:fbtn];
+        y += 28;
+    }
 
     // Account tracking section
     UIView *acctBox = [[UIView alloc] initWithFrame:CGRectMake(12, y, pw - 24, 56)];
@@ -963,68 +977,16 @@
     [self showToast:@"🔋 تم إيقاف الخلفية"];
 }
 
-#pragma mark - Features Window
-
-- (void)showFeaturesWindow {
-    UIWindow *w = self.overlayWindow;
-    UIView *panel = [[UIView alloc] initWithFrame:CGRectMake(50, 120, 280, 350)];
-    panel.backgroundColor = self.isDarkMode ? [UIColor colorWithWhite:0.08 alpha:1] : [UIColor colorWithWhite:0.95 alpha:1];
-    panel.layer.cornerRadius = 20;
-    panel.tag = 8888;
-    [w addSubview:panel];
-
-    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 10, 280, 30)];
-    title.text = @"الأدوات";
-    title.textAlignment = NSTextAlignmentCenter;
-    title.textColor = self.isDarkMode ? [UIColor whiteColor] : [UIColor blackColor];
-    title.font = [UIFont boldSystemFontOfSize:18];
-    [panel addSubview:title];
-
-    NSArray *features = @[
-        @{@"name": @"ازلة الصدمة", @"key": @"autoQueueEnabled"},
-        @{@"name": @"فاست اكس", @"key": @"goldenShotEnabled"},
-        @{@"name": @"تقوية الشقه", @"key": @"drawPredictionEnabled"},
-        @{@"name": @"تقوية تدبيل", @"key": @"freezeLinesEnabled"},
-        @{@"name": @"x9 سبيد سرعة", @"key": @"antiRecordEnabled"},
-    ];
-
-    for (int i = 0; i < features.count; i++) {
-        NSDictionary *f = features[i];
-        BOOL enabled = [[self valueForKey:f[@"key"]] boolValue];
-        UIButton *btn = [UIButton buttonWithType:UIButtonTypeSystem];
-        btn.frame = CGRectMake(20, 50 + i * 48, 240, 40);
-        [btn setTitle:f[@"name"] forState:UIControlStateNormal];
-        btn.backgroundColor = enabled ? PRIMARY_COLOR : [UIColor blackColor];
-        btn.tintColor = [UIColor whiteColor];
-        btn.layer.cornerRadius = 12;
-        btn.tag = i + 1;
-        [btn addTarget:self action:@selector(toggleFeatureFromTag:) forControlEvents:UIControlEventTouchUpInside];
-        [panel addSubview:btn];
-    }
-
-    UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    closeBtn.frame = CGRectMake(200, 310, 70, 30);
-    [closeBtn setTitle:@"إغلاق" forState:UIControlStateNormal];
-    closeBtn.backgroundColor = [UIColor blackColor];
-    closeBtn.tintColor = [UIColor whiteColor];
-    closeBtn.layer.cornerRadius = 15;
-    [closeBtn addTarget:self action:@selector(closePanel:) forControlEvents:UIControlEventTouchUpInside];
-    [panel addSubview:closeBtn];
-}
+#pragma mark - Feature Toggle
 
 - (void)toggleFeatureFromTag:(UIButton *)sender {
     NSArray *keys = @[@"autoQueueEnabled", @"goldenShotEnabled", @"drawPredictionEnabled", @"freezeLinesEnabled", @"antiRecordEnabled"];
     NSString *key = keys[sender.tag - 1];
     BOOL current = [[self valueForKey:key] boolValue];
     [self setValue:@(!current) forKey:key];
-    // Update button appearance in-place instead of recreating the whole panel
     sender.backgroundColor = current ? [UIColor blackColor] : PRIMARY_COLOR;
     [self saveInstanceState];
     notify_post("com.abdulilah.featuresChanged");
-}
-
-- (void)closePanel:(UIButton *)sender {
-    [[self.overlayWindow viewWithTag:8888] removeFromSuperview];
 }
 
 #pragma mark - Settings Window
