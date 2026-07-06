@@ -4,7 +4,7 @@
 #import <AudioToolbox/AudioToolbox.h>
 #import <AVFoundation/AVFoundation.h>
 
-#define SHARED_STATE   @"/tmp/com.abdulilah.state.plist"
+#define SHARED_STATE @"/tmp/com.abdulilah.state.plist"
 
 #define PRIMARY_COLOR    [UIColor colorWithRed:0.00 green:0.60 blue:1.00 alpha:1.0]
 #define SUCCESS_COLOR    [UIColor colorWithRed:0.00 green:0.50 blue:1.00 alpha:1.0]
@@ -13,6 +13,121 @@
 #define BG_CARD          [UIColor colorWithRed:0.10 green:0.10 blue:0.15 alpha:0.90]
 #define TEXT_PRIMARY     [UIColor whiteColor]
 #define TEXT_SECONDARY   [UIColor colorWithRed:0.60 green:0.60 blue:0.70 alpha:1.0]
+
+#pragma mark - YLT Account Model
+
+@interface YLTAccount : NSObject
+@property (nonatomic, strong) NSString *bundleID;
+@property (nonatomic, assign) BOOL active;
+- (instancetype)initWithBundle:(NSString *)bundle;
+- (void)connect;
+- (void)performAction:(NSString *)action;
+@end
+
+@implementation YLTAccount
+
+- (instancetype)initWithBundle:(NSString *)bundle {
+    self = [super init];
+    if (self) {
+        self.bundleID = bundle;
+        self.active = NO;
+    }
+    return self;
+}
+
+- (void)connect {
+    NSLog(@"[عبدالإله] Connected: %@", self.bundleID);
+    self.active = YES;
+}
+
+- (void)performAction:(NSString *)action {
+    NSLog(@"[عبدالإله] %@ -> %@", action, self.bundleID);
+}
+
+@end
+
+#pragma mark - YLT Merge System
+
+static NSMutableArray<YLTAccount *> *YLTAccounts;
+static BOOL YLTMerged = YES;
+
+static void YLTLoadAccounts(void) {
+    YLTAccounts = [NSMutableArray new];
+    NSArray *bundles = @[
+        @"com.yalla.yallalite",
+        @"com.yalla.yallalite11",
+        @"com.yalla.yallalite22",
+        @"com.yalla.yallalite33",
+        @"com.yalla.yallalite44",
+        @"com.yalla.yallalite55",
+        @"com.yalla.yallalite66",
+        @"com.yalla.yallalite77",
+        @"com.yalla.yallalite88"
+    ];
+    for (NSString *bundle in bundles) {
+        [YLTAccounts addObject:[[YLTAccount alloc] initWithBundle:bundle]];
+    }
+}
+
+static void YLTAttach(void) {
+    for (YLTAccount *acc in YLTAccounts) {
+        [acc connect];
+    }
+}
+
+#pragma mark - Broadcast & Sync
+
+@class AbdulilahManager;
+extern void YLT_Do(NSString *action);
+extern void YLT_Touch(CGFloat x, CGFloat y);
+
+static void YLTBroadcastAction(NSString *action) {
+    if (!YLTMerged) return;
+    NSMutableDictionary *dict = [NSMutableDictionary dictionary];
+    dict[@"action"] = action;
+    dict[@"timestamp"] = @([[NSDate date] timeIntervalSince1970]);
+    dict[@"tapOn"] = @([action isEqualToString:@"start"]);
+    [dict writeToFile:SHARED_STATE atomically:YES];
+    for (YLTAccount *acc in YLTAccounts) {
+        if (acc.active) {
+            [acc performAction:action];
+        }
+    }
+}
+
+static void YLTSyncTouch(CGPoint point) {
+    if (!YLTMerged) return;
+    NSMutableDictionary *dict = [NSMutableDictionary dictionary];
+    dict[@"cx"] = @(point.x);
+    dict[@"cy"] = @(point.y);
+    dict[@"timestamp"] = @([[NSDate date] timeIntervalSince1970]);
+    [dict writeToFile:SHARED_STATE atomically:YES];
+    for (YLTAccount *acc in YLTAccounts) {
+        if (acc.active) {
+            NSLog(@"[عبدالإله] 👆 Touch (%.1f, %.1f) -> %@", point.x, point.y, acc.bundleID);
+        }
+    }
+}
+
+#pragma mark - Public API
+
+void YLT_Do(NSString *action) {
+    YLTBroadcastAction(action);
+}
+
+void YLT_Touch(CGFloat x, CGFloat y) {
+    YLTSyncTouch(CGPointMake(x, y));
+}
+
+#pragma mark - Auto Init
+
+__attribute__((constructor))
+static void YLTInitSystem(void) {
+    YLTLoadAccounts();
+    YLTAttach();
+}
+
+#pragma mark - Overlay Window
 
 @interface AbdulilahOverlayWindow : UIWindow
 @end
@@ -23,6 +138,8 @@
     return hit;
 }
 @end
+
+#pragma mark - AbdulilahManager
 
 @interface AbdulilahManager : NSObject
 
@@ -281,7 +398,7 @@
     self.cachedTapTarget = nil;
     self.cachedGameWindow = nil;
     if (p.state == UIGestureRecognizerStateEnded) {
-        [self saveInstanceState];
+        YLT_Touch(v.center.x, v.center.y);
     }
 }
 
@@ -525,24 +642,10 @@
 - (void)toggleStartStop {
     @try {
         if (self.autoTapEnabled) {
-            NSMutableDictionary *dict = [NSMutableDictionary dictionary];
-            dict[@"tapOn"] = @(NO);
-            if (self.tapMarker) {
-                dict[@"cx"] = @(self.tapMarker.center.x);
-                dict[@"cy"] = @(self.tapMarker.center.y);
-            }
-            dict[@"speed"] = @(self.currentSpeed);
-            [dict writeToFile:SHARED_STATE atomically:YES];
+            YLT_Do(@"stop");
             [self stopTap];
         } else {
-            NSMutableDictionary *dict = [NSMutableDictionary dictionary];
-            dict[@"tapOn"] = @(YES);
-            if (self.tapMarker) {
-                dict[@"cx"] = @(self.tapMarker.center.x);
-                dict[@"cy"] = @(self.tapMarker.center.y);
-            }
-            dict[@"speed"] = @(self.currentSpeed);
-            [dict writeToFile:SHARED_STATE atomically:YES];
+            YLT_Do(@"start");
             [self startTap];
         }
     } @catch (NSException *e) {
@@ -690,7 +793,7 @@
 
 @end
 
-#pragma mark - YallaLite Specific Hook
+#pragma mark - YallaLite Hooks
 
 %hook UIViewController
 
