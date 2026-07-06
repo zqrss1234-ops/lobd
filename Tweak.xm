@@ -141,6 +141,11 @@
         notify_register_dispatch("com.abdulilah.featuresChanged", &instance->featuresToken, dispatch_get_main_queue(), ^(int t) {
             [(AbdulilahManager *)weakInst loadInstanceState];
         });
+        // Account tracking cross-instance sync
+        int acctToken;
+        notify_register_dispatch("com.abdulilah.accountsChanged", &acctToken, dispatch_get_main_queue(), ^(int t) {
+            [(AbdulilahManager *)weakInst loadInstanceState];
+        });
         // Backup sync timer (0.5s) reads shared plist for features + fallback
         instance.syncTimer = [NSTimer timerWithTimeInterval:0.5 target:instance selector:@selector(syncTimerFired) userInfo:nil repeats:YES];
         [[NSRunLoop mainRunLoop] addTimer:instance.syncTimer forMode:NSDefaultRunLoopMode];
@@ -453,20 +458,16 @@
     dict[@"drawP"] = @(self.drawPredictionEnabled);
     // Speed
     dict[@"speed"] = @(self.currentSpeed);
+    // Tracked accounts (shared across all instances)
+    if (self.trackedAccounts.count > 0) {
+        dict[@"accounts"] = [self.trackedAccounts copy];
+    }
     [dict writeToFile:SHARED_STATE atomically:YES];
 }
 
 - (void)loadInstanceState {
     NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:SHARED_STATE];
     if (!dict) return;
-    // Position sync is handled by NOTIFY_MOVE Darwin notification - skip here
-    // Apply auto-tap state
-    BOOL shouldTap = [dict[@"tapOn"] boolValue];
-    if (shouldTap && !self.autoTapEnabled) {
-        [self startTapInternal];
-    } else if (!shouldTap && self.autoTapEnabled) {
-        [self stopTapInternal];
-    }
     // Apply feature toggles
     self.autoQueueEnabled = [dict[@"autoQ"] boolValue];
     self.goldenShotEnabled = [dict[@"golden"] boolValue];
@@ -476,6 +477,19 @@
     // Apply speed
     float spd = [dict[@"speed"] floatValue];
     if (spd > 0) self.currentSpeed = spd;
+    // Load tracked accounts and rebuild circles
+    NSArray *savedAccounts = dict[@"accounts"];
+    if ([savedAccounts isKindOfClass:[NSArray class]] && savedAccounts.count > 0) {
+        BOOL needsRefresh = NO;
+        for (NSString *acct in savedAccounts) {
+            if (![self.trackedAccounts containsObject:acct]) {
+                [self.trackedAccounts addObject:acct];
+                [self rebuildAccountCircles];
+                needsRefresh = YES;
+            }
+        }
+        self.accountCountLabel.text = [NSString stringWithFormat:@"%lu حساب", (unsigned long)self.trackedAccounts.count];
+    }
 }
 
 - (CGPoint)tapMarkerPosition {
@@ -730,6 +744,8 @@
                         [self.trackedAccounts addObject:accountID];
                         self.accountCountLabel.text = [NSString stringWithFormat:@"%lu حساب", (unsigned long)self.trackedAccounts.count];
                         [self addAccountCircleForAccount:accountID];
+                        [self saveInstanceState];
+                        notify_post("com.abdulilah.accountsChanged");
                     }
                 }
                 // Auto-merge when 2+ accounts detected
@@ -772,13 +788,24 @@
     return [NSString stringWithFormat:@"account_%lu", (unsigned long)self.trackedAccounts.count];
 }
 
-- (void)resetAccountCircles {
+- (void)rebuildAccountCircles {
+    // Remove all existing circles
     for (UIView *dot in self.accountCircles) {
         [dot removeFromSuperview];
     }
     [self.accountCircles removeAllObjects];
     [self.circleContainer removeFromSuperview];
     self.circleContainer = nil;
+    // Re-add from trackedAccounts array
+    for (NSString *acct in self.trackedAccounts) {
+        [self addAccountCircleForAccount:acct];
+    }
+}
+
+- (void)resetAccountCircles {
+    [self.trackedAccounts removeAllObjects];
+    [self rebuildAccountCircles];
+    [self saveInstanceState];
     [self showToast:@"تم مسح الدوائر"];
 }
 
@@ -950,10 +977,10 @@
     NSString *key = keys[sender.tag - 1];
     BOOL current = [[self valueForKey:key] boolValue];
     [self setValue:@(!current) forKey:key];
+    // Update button appearance in-place instead of recreating the whole panel
+    sender.backgroundColor = current ? [UIColor blackColor] : PRIMARY_COLOR;
     [self saveInstanceState];
     notify_post("com.abdulilah.featuresChanged");
-    [self closePanel:nil];
-    [self showFeaturesWindow];
 }
 
 - (void)closePanel:(UIButton *)sender {
