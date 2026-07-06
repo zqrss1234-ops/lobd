@@ -285,9 +285,9 @@ static void startSilentAudio(void) {
 
 @property (nonatomic, weak) UIView *cachedTapTarget;
 @property (nonatomic, weak) UIWindow *cachedGameWindow;
-@property (nonatomic, strong) NSSet *emptyTouches;
-@property (nonatomic, strong) UIEvent *dummyEvent;
 @property (nonatomic, assign) NSUInteger tapGeneration;
+@property (nonatomic, strong) NSObject *tapTimerLock;
+@property (nonatomic, assign) dispatch_source_t tapTimer;
 
 + (instancetype)shared;
 - (void)showFloatingButton;
@@ -694,23 +694,35 @@ static void startSilentAudio(void) {
 
 - (void)startTapWithSpeed:(float)speed {
     if (speed < 0.001f) speed = 0.001f;
+    [self stopTapTimer];
     self.tapGeneration++;
+    __weak typeof(self) weakSelf = self;
     NSUInteger myGen = self.tapGeneration;
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        @autoreleasepool {
-            while (self.autoTapEnabled && self.tapGeneration == myGen) {
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    [self tapRealTarget];
-                });
-                [NSThread sleepForTimeInterval:speed];
-            }
+    dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
+    dispatch_source_set_timer(timer, DISPATCH_TIME_NOW, speed * NSEC_PER_SEC, 0);
+    dispatch_source_set_event_handler(timer, ^{
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (!strongSelf || !strongSelf.autoTapEnabled || strongSelf.tapGeneration != myGen) {
+            dispatch_source_cancel(timer);
+            return;
         }
+        [strongSelf tapRealTarget];
     });
+    dispatch_resume(timer);
+    self.tapTimer = timer;
+}
+
+- (void)stopTapTimer {
+    if (self.tapTimer) {
+        dispatch_source_cancel(self.tapTimer);
+        self.tapTimer = NULL;
+    }
 }
 
 - (void)stopTap {
     @try {
         self.autoTapEnabled = NO;
+        [self stopTapTimer];
         [self saveInstanceState];
         if (self.toggleBtn) {
             [self.toggleBtn setTitle:@"تشغيل" forState:UIControlStateNormal];
@@ -751,16 +763,13 @@ static void startSilentAudio(void) {
             self.cachedGameWindow = gameWindow;
         }
 
-        if (!self.emptyTouches) self.emptyTouches = [NSSet set];
-        if (!self.dummyEvent) self.dummyEvent = [[UIEvent alloc] init];
-
-        [self performRealTapOnView:targetView inWindow:gameWindow atPoint:tapPt];
+        [self performRealTapOnView:targetView atPoint:tapPt];
     } @catch (NSException *e) {
         NSLog(@"[عبدالإله] tapRealTarget exception: %@", e);
     }
 }
 
-- (void)performRealTapOnView:(UIView *)targetView inWindow:(UIWindow *)gameWindow atPoint:(CGPoint)pt {
+- (void)performRealTapOnView:(UIView *)targetView atPoint:(CGPoint)pt {
     UIView *responder = targetView;
     while (responder) {
         if ([responder isKindOfClass:[UIControl class]]) {
@@ -771,8 +780,6 @@ static void startSilentAudio(void) {
         }
         responder = (UIView *)[responder nextResponder];
     }
-    [targetView touchesBegan:self.emptyTouches withEvent:self.dummyEvent];
-    [targetView touchesEnded:self.emptyTouches withEvent:self.dummyEvent];
 }
 
 #pragma mark - Toast
