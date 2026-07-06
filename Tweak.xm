@@ -1305,11 +1305,11 @@
     // Cancel any gesture on overlay
     self.tapMarker.userInteractionEnabled = NO;
     
+    NSSet *emptyTouches = [NSSet set];
+    UIEvent *dummyEvent = [[UIEvent alloc] init];
+    
     // Method 1: Send touch events directly to the view
     // This simulates a real finger press more accurately than sendActions
-    UIEvent *touchEvent = nil;
-    
-    // Create a UITouch-like simulation by directly calling touch handling methods
     BOOL handled = NO;
     
     // Walk responder chain for UIControl
@@ -1328,8 +1328,8 @@
     // Method 2: Direct touch callbacks on the target view
     // This catches views that override touchesBegan:/touchesEnded:
     if (!handled) {
-        [targetView touchesBegan:nil withEvent:nil];
-        [targetView touchesEnded:nil withEvent:nil];
+        [targetView touchesBegan:emptyTouches withEvent:dummyEvent];
+        [targetView touchesEnded:emptyTouches withEvent:dummyEvent];
     }
     
     // Method 3: sendAction up responder chain (broadcast event)
@@ -1340,6 +1340,9 @@
 
 - (void)performFrozenRealTapOnView:(UIView *)targetView inWindow:(UIWindow *)gameWindow atPoint:(CGPoint)pt {
     self.tapMarker.userInteractionEnabled = NO;
+    
+    NSSet *emptyTouches = [NSSet set];
+    UIEvent *dummyEvent = [[UIEvent alloc] init];
     
     UIView *responder = targetView;
     while (responder) {
@@ -1352,8 +1355,8 @@
         responder = (UIView *)[responder nextResponder];
     }
     
-    [targetView touchesBegan:nil withEvent:nil];
-    [targetView touchesEnded:nil withEvent:nil];
+    [targetView touchesBegan:emptyTouches withEvent:dummyEvent];
+    [targetView touchesEnded:emptyTouches withEvent:dummyEvent];
     
     [[UIApplication sharedApplication] sendAction:@selector(tapAction:) to:nil from:targetView forEvent:nil];
     
