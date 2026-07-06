@@ -3,24 +3,23 @@
 #import <objc/runtime.h>
 #import <AudioToolbox/AudioToolbox.h>
 
-#define SHARED_PLIST   @"/var/mobile/Library/Preferences/com.abdulilah.shared.plist"
 #define NOTIFY_MOVE    "com.abdulilah.circleMoved"
 #define NOTIFY_START   "com.abdulilah.tapStarted"
 #define NOTIFY_STOP    "com.abdulilah.tapStopped"
+#define SHARED_PATH    @"/var/mobile/Library/Preferences/com.abdulilah.shared.plist"
+
+@class AbdulilahManager;
 
 static void markerMovedCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
-    AbdulilahManager *m = (__bridge AbdulilahManager *)observer;
-    [m markerPositionDidChange];
+    [(__bridge AbdulilahManager *)observer markerPositionDidChange];
 }
 
 static void tapStartedCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
-    AbdulilahManager *m = (__bridge AbdulilahManager *)observer;
-    [m performSelectorOnMainThread:@selector(startTap) withObject:nil waitUntilDone:NO];
+    [(__bridge AbdulilahManager *)observer performSelectorOnMainThread:@selector(startTap) withObject:nil waitUntilDone:NO];
 }
 
 static void tapStoppedCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
-    AbdulilahManager *m = (__bridge AbdulilahManager *)observer;
-    [m performSelectorOnMainThread:@selector(stopTap) withObject:nil waitUntilDone:NO];
+    [(__bridge AbdulilahManager *)observer performSelectorOnMainThread:@selector(stopTap) withObject:nil waitUntilDone:NO];
 }
 
 #define PRIMARY_COLOR    [UIColor colorWithRed:0.00 green:0.60 blue:1.00 alpha:1.0]
@@ -373,16 +372,15 @@ static void tapStoppedCallback(CFNotificationCenterRef center, void *observer, C
     UIWindow *w = [UIApplication sharedApplication].keyWindow;
     CGPoint pt = [self.tapMarker convertPoint:CGPointMake(self.tapMarker.bounds.size.width/2, self.tapMarker.bounds.size.height/2) toView:w];
     NSDictionary *dict = @{@"x": @(pt.x), @"y": @(pt.y)};
-    [dict writeToFile:@SHARED_PLIST atomically:YES];
+    [dict writeToFile:SHARED_PATH atomically:YES];
 }
 
 - (void)loadSharedMarkerPosition {
-    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:@SHARED_PLIST];
+    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:SHARED_PATH];
     if (dict && self.tapMarker) {
         CGFloat x = [dict[@"x"] floatValue];
         CGFloat y = [dict[@"y"] floatValue];
         if (x > 0 && y > 0) {
-            UIWindow *w = [UIApplication sharedApplication].keyWindow;
             self.tapMarker.center = CGPointMake(x, y);
         }
     }
