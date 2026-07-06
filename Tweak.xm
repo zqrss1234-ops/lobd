@@ -514,8 +514,7 @@
 
 - (CGPoint)tapMarkerPosition {
     if (!self.tapMarker || !self.showMarker) return CGPointZero;
-    UIWindow *w = [UIApplication sharedApplication].keyWindow;
-    return [self.tapMarker convertPoint:CGPointMake(self.tapMarker.bounds.size.width/2, self.tapMarker.bounds.size.height/2) toView:w];
+    return self.tapMarker.center;
 }
 
 #pragma mark - Main Panel
