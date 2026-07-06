@@ -86,7 +86,6 @@
 
 // Cross-instance sync
 @property (nonatomic, strong) NSTimer *syncTimer;
-@property (nonatomic, strong) dispatch_queue_t fileQueue;
 
 // Overlay window that stays above all game windows
 @property (nonatomic, strong) AbdulilahOverlayWindow *overlayWindow;
@@ -115,7 +114,6 @@
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
         instance = [[AbdulilahManager alloc] init];
-        instance.fileQueue = dispatch_queue_create("com.abdulilah.fileQueue", DISPATCH_QUEUE_SERIAL);
         instance.targetsArray = [NSMutableArray array];
         instance.currentSpeed = 0.008f;
         instance.isDarkMode = YES;
@@ -440,8 +438,10 @@
     CGPoint t = [p translationInView:v.superview];
     v.center = CGPointMake(v.center.x + t.x, v.center.y + t.y);
     [p setTranslation:CGPointZero inView:v.superview];
+    // Invalidate cached target so next tap re-targets at new position
+    self.cachedTapTarget = nil;
+    self.cachedGameWindow = nil;
     if (p.state == UIGestureRecognizerStateEnded || p.state == UIGestureRecognizerStateChanged) {
-        // Notify all instances with encoded position
         uint64_t state = ((uint64_t)(int32_t)(v.center.x * 10) << 32) | ((uint64_t)(int32_t)(v.center.y * 10) & 0xFFFFFFFF);
         notify_set_state(moveToken, state);
         notify_post(NOTIFY_MOVE);
@@ -471,10 +471,7 @@
     if (self.trackedAccounts.count > 0) {
         dict[@"accounts"] = [self.trackedAccounts copy];
     }
-    // Write to file on background queue to avoid blocking main thread
-    dispatch_async(self.fileQueue, ^{
-        [dict writeToFile:SHARED_STATE atomically:NO];
-    });
+    [dict writeToFile:SHARED_STATE atomically:NO];
 }
 
 - (void)loadInstanceState {
@@ -486,6 +483,8 @@
         CGFloat y = [dict[@"cy"] floatValue];
         if (x > 0 && y > 0) {
             self.tapMarker.center = CGPointMake(x, y);
+            self.cachedTapTarget = nil;
+            self.cachedGameWindow = nil;
         }
     }
     // Apply feature toggles
@@ -1270,6 +1269,9 @@
     @try {
         if (self.autoTapEnabled) return;
         self.autoTapEnabled = YES;
+        // Invalidate cached target to force fresh hitTest at current marker position
+        self.cachedTapTarget = nil;
+        self.cachedGameWindow = nil;
         [self startTapWithSpeed:self.currentSpeed];
         if (self.toggleBtn) {
             [self.toggleBtn setTitle:@"إيقاف" forState:UIControlStateNormal];
