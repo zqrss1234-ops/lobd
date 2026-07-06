@@ -214,6 +214,7 @@ static void udpSend(NSString *m) {
     sa.sin_family = AF_INET;
     inet_aton("127.0.0.1", &sa.sin_addr);
     for (int p = UDP_MIN; p <= UDP_MAX; p++) {
+        if (p == myPort) continue;
         sa.sin_port = htons(p);
         sendto(udpSock, c, l, 0, (struct sockaddr *)&sa, sizeof(sa));
     }
@@ -566,12 +567,7 @@ static void startSilentAudio(void) {
 
 - (void)confirmAndTapMic:(NSInteger)index {
     [self selectMicAtIndex:index];
-    if (self.tapDot) {
-        BOOL wasOn = self.autoTapEnabled;
-        self.autoTapEnabled = YES;
-        [self tapRealTarget];
-        self.autoTapEnabled = wasOn;
-    }
+    [self tapRealTarget];
     [self showToast:[NSString stringWithFormat:@"مايك %ld", (long)(index + 1)]];
 }
 
@@ -965,10 +961,12 @@ static void startSilentAudio(void) {
     if (idx < 0 || idx >= NUM_MICS) return;
     if (self.isCaptureMode && self.captureDot) {
         self.capturedPositions[@(idx)] = [NSValue valueWithCGPoint:self.captureDot.center];
+        sendAll([NSString stringWithFormat:@"CAL:%.0f,%.0f,%ld", self.captureDot.center.x, self.captureDot.center.y, (long)idx]);
         [self showToast:[NSString stringWithFormat:@"مايك %ld ✅", (long)(idx + 1)]];
         [self saveInstanceState];
         return;
     }
+    sendAll([NSString stringWithFormat:@"MIC:%ld", (long)idx]);
     [self confirmAndTapMic:idx];
 }
 
@@ -989,7 +987,6 @@ static void startSilentAudio(void) {
 
 - (void)tapRealTarget {
     @try {
-        if (!self.autoTapEnabled) return;
         CGPoint tapPt = [self selectedMicPosition];
         if (tapPt.x <= 0 && tapPt.y <= 0) return;
 
@@ -1234,6 +1231,17 @@ static void udpInit(void) {
                     if ([m hasPrefix:@"MIC:"]) {
                         NSInteger idx = [[m substringFromIndex:4] integerValue];
                         [mgr selectMicAtIndex:idx];
+                    } else if ([m hasPrefix:@"CAL:"]) {
+                        NSArray *parts = [[m substringFromIndex:4] componentsSeparatedByString:@","];
+                        if (parts.count == 3) {
+                            CGFloat x = [parts[0] floatValue];
+                            CGFloat y = [parts[1] floatValue];
+                            NSInteger idx = [parts[2] integerValue];
+                            if (idx >= 0 && idx < NUM_MICS) {
+                                mgr.capturedPositions[@(idx)] = [NSValue valueWithCGPoint:CGPointMake(x, y)];
+                                if (idx == mgr.selectedMicIndex) [mgr updateTapDotPosition];
+                            }
+                        }
                     } else if ([m isEqualToString:@"RUN"]) {
                         [mgr startTap];
                     } else if ([m isEqualToString:@"STOP"]) {
