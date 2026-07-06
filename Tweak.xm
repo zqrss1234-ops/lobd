@@ -3,12 +3,8 @@
 #import <objc/runtime.h>
 #import <AudioToolbox/AudioToolbox.h>
 #import <AVFoundation/AVFoundation.h>
-#import <notify.h>
 
 #define SHARED_STATE   @"/var/mobile/Library/Preferences/com.abdulilah.state.plist"
-#define NOTIFY_MOVE    "com.abdulilah.circleMoved"
-#define NOTIFY_START   "com.abdulilah.tapStarted"
-#define NOTIFY_STOP    "com.abdulilah.tapStopped"
 
 #define PRIMARY_COLOR    [UIColor colorWithRed:0.00 green:0.60 blue:1.00 alpha:1.0]
 #define SUCCESS_COLOR    [UIColor colorWithRed:0.00 green:0.50 blue:1.00 alpha:1.0]
@@ -32,10 +28,6 @@
 @end
 
 @interface AbdulilahManager : NSObject {
-    int moveToken;
-    int startToken;
-    int stopToken;
-    int featuresToken;
 }
 
 @property (nonatomic, strong) UIView *mainPanel;
@@ -58,11 +50,6 @@
 @property (nonatomic, strong) UITableView *scriptsTable;
 @property (nonatomic, assign) BOOL isDarkMode;
 @property (nonatomic, assign) BOOL isMenuVisible;
-@property (nonatomic, assign) BOOL autoQueueEnabled;
-@property (nonatomic, assign) BOOL goldenShotEnabled;
-@property (nonatomic, assign) BOOL drawPredictionEnabled;
-@property (nonatomic, assign) BOOL freezeLinesEnabled;
-@property (nonatomic, assign) BOOL antiRecordEnabled;
 @property (nonatomic, assign) float transparencyValue;
 @property (nonatomic, strong) NSTimer *uiGuardTimer;
 
@@ -80,9 +67,6 @@
 // Single tap marker for positioning
 @property (nonatomic, strong) UIView *tapMarker;
 @property (nonatomic, assign) BOOL showMarker;
-
-// Prediction line layer
-@property (nonatomic, strong) CAShapeLayer *predictionLine;
 
 // Cross-instance sync
 @property (nonatomic, strong) NSTimer *syncTimer;
@@ -126,40 +110,7 @@
         instance.showMarker = NO;
         [instance prepareScriptsFolder];
         [instance startUIGuard];
-        // Register Darwin notify callbacks for cross-instance sync
-        __weak AbdulilahManager *weakInst = instance;
-        notify_register_dispatch(NOTIFY_MOVE, &instance->moveToken, dispatch_get_main_queue(), ^(int t) {
-            AbdulilahManager *strong = weakInst;
-            if (!strong) return;
-            uint64_t state = 0;
-            notify_get_state(t, &state);
-            CGFloat x = (CGFloat)((int32_t)(state >> 32)) / 10.0;
-            CGFloat y = (CGFloat)((int32_t)(state & 0xFFFFFFFF)) / 10.0;
-            if (x > 0 && y > 0 && strong.tapMarker) {
-                strong.tapMarker.center = CGPointMake(x, y);
-            }
-        });
-        notify_register_dispatch(NOTIFY_START, &instance->startToken, dispatch_get_main_queue(), ^(int t) {
-            AbdulilahManager *m = weakInst;
-            if (m && !m.autoTapEnabled) {
-                [m startTapInternal];
-            }
-        });
-        notify_register_dispatch(NOTIFY_STOP, &instance->stopToken, dispatch_get_main_queue(), ^(int t) {
-            AbdulilahManager *m = weakInst;
-            if (m && m.autoTapEnabled) {
-                [m stopTapInternal];
-            }
-        });
-        notify_register_dispatch("com.abdulilah.featuresChanged", &instance->featuresToken, dispatch_get_main_queue(), ^(int t) {
-            [(AbdulilahManager *)weakInst loadInstanceState];
-        });
-        // Account tracking cross-instance sync
-        int acctToken;
-        notify_register_dispatch("com.abdulilah.accountsChanged", &acctToken, dispatch_get_main_queue(), ^(int t) {
-            [(AbdulilahManager *)weakInst loadInstanceState];
-        });
-        // Backup sync timer (0.15s) reads shared plist for features + fallback
+        // Sync timer (0.15s) reads shared plist for cross-instance sync
         instance.syncTimer = [NSTimer timerWithTimeInterval:0.15 target:instance selector:@selector(syncTimerFired) userInfo:nil repeats:YES];
         [[NSRunLoop mainRunLoop] addTimer:instance.syncTimer forMode:NSRunLoopCommonModes];
         // Auto-show marker after window is ready
@@ -438,16 +389,10 @@
     CGPoint t = [p translationInView:v.superview];
     v.center = CGPointMake(v.center.x + t.x, v.center.y + t.y);
     [p setTranslation:CGPointZero inView:v.superview];
-    // Invalidate cached target so next tap re-targets at new position
     self.cachedTapTarget = nil;
     self.cachedGameWindow = nil;
-    if (p.state == UIGestureRecognizerStateEnded || p.state == UIGestureRecognizerStateChanged) {
-        uint64_t state = ((uint64_t)(int32_t)(v.center.x * 10) << 32) | ((uint64_t)(int32_t)(v.center.y * 10) & 0xFFFFFFFF);
-        notify_set_state(moveToken, state);
-        notify_post(NOTIFY_MOVE);
-        if (p.state == UIGestureRecognizerStateEnded) {
-            [self saveInstanceState];
-        }
+    if (p.state == UIGestureRecognizerStateEnded) {
+        [self saveInstanceState];
     }
 }
 
@@ -462,11 +407,6 @@
         dict[@"cy"] = @(self.tapMarker.center.y);
     }
     dict[@"tapOn"] = @(self.autoTapEnabled);
-    dict[@"autoQ"] = @(self.autoQueueEnabled);
-    dict[@"golden"] = @(self.goldenShotEnabled);
-    dict[@"freeze"] = @(self.freezeLinesEnabled);
-    dict[@"antiR"] = @(self.antiRecordEnabled);
-    dict[@"drawP"] = @(self.drawPredictionEnabled);
     dict[@"speed"] = @(self.currentSpeed);
     if (self.trackedAccounts.count > 0) {
         dict[@"accounts"] = [self.trackedAccounts copy];
@@ -487,12 +427,6 @@
             self.cachedGameWindow = nil;
         }
     }
-    // Apply feature toggles
-    self.autoQueueEnabled = [dict[@"autoQ"] boolValue];
-    self.goldenShotEnabled = [dict[@"golden"] boolValue];
-    self.freezeLinesEnabled = [dict[@"freeze"] boolValue];
-    self.antiRecordEnabled = [dict[@"antiR"] boolValue];
-    self.drawPredictionEnabled = [dict[@"drawP"] boolValue];
     // Apply speed
     float spd = [dict[@"speed"] floatValue];
     if (spd > 0) {
@@ -644,24 +578,6 @@
     [self.mainPanel addSubview:scriptsBtn];
     y += 34;
 
-    // Inline feature toggles
-    NSArray *featureNames = @[@"ازلة الصدمة", @"فاست اكس", @"تقوية الشقه", @"تقوية تدبيل", @"x9 سبيد سرعة"];
-    NSArray *featureKeys = @[@"autoQueueEnabled", @"goldenShotEnabled", @"drawPredictionEnabled", @"freezeLinesEnabled", @"antiRecordEnabled"];
-    for (int i = 0; i < featureNames.count; i++) {
-        BOOL enabled = [[self valueForKey:featureKeys[i]] boolValue];
-        UIButton *fbtn = [UIButton buttonWithType:UIButtonTypeCustom];
-        fbtn.frame = CGRectMake(12, y, pw - 24, 26);
-        fbtn.backgroundColor = enabled ? PRIMARY_COLOR : [UIColor blackColor];
-        fbtn.layer.cornerRadius = 13;
-        [fbtn setTitle:featureNames[i] forState:UIControlStateNormal];
-        [fbtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-        fbtn.titleLabel.font = [UIFont boldSystemFontOfSize:10];
-        fbtn.tag = i + 1;
-        [fbtn addTarget:self action:@selector(toggleFeatureFromTag:) forControlEvents:UIControlEventTouchUpInside];
-        [self.mainPanel addSubview:fbtn];
-        y += 28;
-    }
-
     // Account tracking section
     UIView *acctBox = [[UIView alloc] initWithFrame:CGRectMake(12, y, pw - 24, 56)];
     acctBox.backgroundColor = BG_CARD;
@@ -737,17 +653,6 @@
     [bgBox addSubview:bgToggle];
     y += 42;
 
-    // Settings button
-    UIButton *settingsBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    settingsBtn.frame = CGRectMake(12, y, pw - 24, 30);
-    [settingsBtn setTitle:@"الإعدادات" forState:UIControlStateNormal];
-    settingsBtn.backgroundColor = [UIColor colorWithRed:0.2 green:0.5 blue:0.8 alpha:1];
-    settingsBtn.tintColor = [UIColor whiteColor];
-    settingsBtn.layer.cornerRadius = 15;
-    [settingsBtn addTarget:self action:@selector(showSettingsWindow) forControlEvents:UIControlEventTouchUpInside];
-    [self.mainPanel addSubview:settingsBtn];
-    y += 34;
-
     // Resize panel
     CGRect f = self.mainPanel.frame;
     f.size.height = y + 10;
@@ -784,7 +689,6 @@
                         self.accountCountLabel.text = [NSString stringWithFormat:@"%lu حساب", (unsigned long)self.trackedAccounts.count];
                         [self addAccountCircleForAccount:accountID];
                         [self saveInstanceState];
-                        notify_post("com.abdulilah.accountsChanged");
                     }
                 }
                 // Auto-merge when 2+ accounts detected
@@ -974,63 +878,6 @@
         self.bgTask = UIBackgroundTaskInvalid;
     }
     [self showToast:@"🔋 تم إيقاف الخلفية"];
-}
-
-#pragma mark - Feature Toggle
-
-- (void)toggleFeatureFromTag:(UIButton *)sender {
-    NSArray *keys = @[@"autoQueueEnabled", @"goldenShotEnabled", @"drawPredictionEnabled", @"freezeLinesEnabled", @"antiRecordEnabled"];
-    NSString *key = keys[sender.tag - 1];
-    BOOL current = [[self valueForKey:key] boolValue];
-    [self setValue:@(!current) forKey:key];
-    sender.backgroundColor = current ? [UIColor blackColor] : PRIMARY_COLOR;
-    [self saveInstanceState];
-    notify_post("com.abdulilah.featuresChanged");
-}
-
-#pragma mark - Settings Window
-
-- (void)showSettingsWindow {
-    UIWindow *w = self.overlayWindow;
-    UIView *panel = [[UIView alloc] initWithFrame:CGRectMake(50, 150, 280, 300)];
-    panel.backgroundColor = self.isDarkMode ? [UIColor colorWithWhite:0.15 alpha:0.97] : [UIColor colorWithWhite:0.95 alpha:0.97];
-    panel.layer.cornerRadius = 20;
-    panel.tag = 9999;
-    [w addSubview:panel];
-
-    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 10, 280, 30)];
-    title.text = @"الإعدادات";
-    title.textAlignment = NSTextAlignmentCenter;
-    title.textColor = self.isDarkMode ? [UIColor whiteColor] : [UIColor blackColor];
-    title.font = [UIFont boldSystemFontOfSize:18];
-    [panel addSubview:title];
-
-    UIButton *themeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    themeBtn.frame = CGRectMake(20, 60, 240, 40);
-    [themeBtn setTitle:self.isDarkMode ? @"وضع فاتح" : @"وضع داكن" forState:UIControlStateNormal];
-    themeBtn.backgroundColor = PRIMARY_COLOR;
-    themeBtn.tintColor = [UIColor whiteColor];
-    themeBtn.layer.cornerRadius = 12;
-    [themeBtn addTarget:self action:@selector(toggleTheme) forControlEvents:UIControlEventTouchUpInside];
-    [panel addSubview:themeBtn];
-
-    UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    closeBtn.frame = CGRectMake(200, 250, 70, 30);
-    [closeBtn setTitle:@"إغلاق" forState:UIControlStateNormal];
-    closeBtn.backgroundColor = [UIColor blackColor];
-    closeBtn.tintColor = [UIColor whiteColor];
-    closeBtn.layer.cornerRadius = 15;
-    [closeBtn addTarget:self action:@selector(closeSettings) forControlEvents:UIControlEventTouchUpInside];
-    [panel addSubview:closeBtn];
-}
-
-- (void)toggleTheme {
-    self.isDarkMode = !self.isDarkMode;
-    [self closeSettings];
-}
-
-- (void)closeSettings {
-    [[self.overlayWindow viewWithTag:9999] removeFromSuperview];
 }
 
 #pragma mark - Scripts Manager
@@ -1228,7 +1075,6 @@
     self.speedLabel.text = [NSString stringWithFormat:@"السرعة: %.3f ث", self.currentSpeed];
     if (self.autoTapEnabled) [self restartTapWithSpeed:self.currentSpeed];
     [self saveInstanceState];
-    notify_post("com.abdulilah.featuresChanged");
 }
 
 - (void)restartTapWithSpeed:(float)speed {
@@ -1253,13 +1099,6 @@
         if (self.autoTapEnabled) return;
         [self startTapInternal];
         [self saveInstanceState];
-        // Notify other instances (safe with @try)
-        if (self.tapMarker) {
-            uint64_t state = ((uint64_t)(int32_t)(self.tapMarker.center.x * 10) << 32) | ((uint64_t)(int32_t)(self.tapMarker.center.y * 10) & 0xFFFFFFFF);
-            notify_set_state(moveToken, state);
-            notify_post(NOTIFY_MOVE);
-        }
-        notify_post(NOTIFY_START);
     } @catch (NSException *e) {
         NSLog(@"[عبدالإله] startTap exception: %@", e);
     }
@@ -1291,11 +1130,6 @@
             while (self.autoTapEnabled && self.tapGeneration == myGen) {
                 dispatch_async(dispatch_get_main_queue(), ^{
                     [self tapRealTarget];
-                    if (self.goldenShotEnabled) [self tapRealTarget];
-                    if (self.freezeLinesEnabled) { [self tapRealTarget]; [self tapRealTarget]; }
-                    if (self.antiRecordEnabled) {
-                        for (int i = 0; i < 8; i++) [self tapRealTarget];
-                    }
                 });
                 [NSThread sleepForTimeInterval:speed];
             }
@@ -1307,13 +1141,6 @@
     @try {
         [self stopTapInternal];
         [self saveInstanceState];
-        // Notify other instances (safe with @try)
-        if (self.tapMarker) {
-            uint64_t state = ((uint64_t)(int32_t)(self.tapMarker.center.x * 10) << 32) | ((uint64_t)(int32_t)(self.tapMarker.center.y * 10) & 0xFFFFFFFF);
-            notify_set_state(moveToken, state);
-            notify_post(NOTIFY_MOVE);
-        }
-        notify_post(NOTIFY_STOP);
     } @catch (NSException *e) {
         NSLog(@"[عبدالإله] stopTap exception: %@", e);
     }
@@ -1363,8 +1190,6 @@
         if (!self.dummyEvent) self.dummyEvent = [[UIEvent alloc] init];
         
         [self performRealTapOnView:targetView inWindow:gameWindow atPoint:tapPt];
-        if (self.autoQueueEnabled) [self tapQueueButtonInView:targetView];
-        if (self.drawPredictionEnabled) [self drawPredictionFromPoint:tapPt inWindow:gameWindow];
     } @catch (NSException *e) {
         NSLog(@"[عبدالإله] tapRealTarget exception: %@", e);
     }
@@ -1386,53 +1211,6 @@
     // Direct touch callbacks for custom touch handlers
     [targetView touchesBegan:self.emptyTouches withEvent:self.dummyEvent];
     [targetView touchesEnded:self.emptyTouches withEvent:self.dummyEvent];
-}
-
-- (void)tapQueueButtonInView:(UIView *)rootView {
-    // Search the key window for buttons with game-related titles
-    UIWindow *keyW = [UIApplication sharedApplication].keyWindow;
-    [self searchForQueueButtonInView:keyW];
-}
-
-- (void)searchForQueueButtonInView:(UIView *)view {
-    for (UIView *sub in view.subviews) {
-        if ([sub isKindOfClass:[UIButton class]]) {
-            UIButton *btn = (UIButton *)sub;
-            NSString *title = [btn titleForState:UIControlStateNormal] ?: @"";
-            if ([title containsString:@"جاهز"] || [title containsString:@"موافق"] ||
-                [title containsString:@"Ready"] || [title containsString:@"OK"] ||
-                [title containsString:@"انضم"] || [title containsString:@"Join"]) {
-                [btn sendActionsForControlEvents:UIControlEventTouchDown];
-                [btn sendActionsForControlEvents:UIControlEventTouchUpInside];
-            }
-        }
-        [self searchForQueueButtonInView:sub];
-    }
-}
-
-- (void)drawPredictionFromPoint:(CGPoint)pt inWindow:(UIWindow *)w {
-    // Remove previous line
-    [self.predictionLine removeFromSuperlayer];
-
-    // Draw a small line indicator at tap point
-    UIBezierPath *path = [UIBezierPath bezierPath];
-    [path moveToPoint:CGPointMake(pt.x - 15, pt.y)];
-    [path addLineToPoint:CGPointMake(pt.x + 15, pt.y)];
-    [path moveToPoint:CGPointMake(pt.x, pt.y - 15)];
-    [path addLineToPoint:CGPointMake(pt.x, pt.y + 15)];
-
-    self.predictionLine = [CAShapeLayer layer];
-    self.predictionLine.path = path.CGPath;
-    self.predictionLine.strokeColor = PRIMARY_COLOR.CGColor;
-    self.predictionLine.lineWidth = 1.5;
-    self.predictionLine.opacity = 0.6;
-    [w.layer addSublayer:self.predictionLine];
-
-    // Auto-remove after 0.3s
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        [self.predictionLine removeFromSuperlayer];
-        self.predictionLine = nil;
-    });
 }
 
 #pragma mark - Toast
