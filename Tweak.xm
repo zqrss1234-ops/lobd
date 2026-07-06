@@ -26,12 +26,6 @@
 
 #define RGBA(r,g,b,a)    [UIColor colorWithRed:r/255.0 green:g/255.0 blue:b/255.0 alpha:a]
 
-static NSArray<NSString *> *accountNames = @[
-    @"عبدالإله", @"شارو", @"لحلوح", @"سعيد",
-    @"ابومتعب", @"كنق الشرق", @"حاتم",
-    @"الكايد", @"الشمامره", @"الهباس"
-];
-
 #define NUM_MICS 10
 
 // Exact mic positions derived from AlDeebManager code (relative to 375x667 base)
@@ -311,8 +305,6 @@ static void startSilentAudio(void) {
 
 @property (nonatomic, strong) CADisplayLink *fastTapLink;
 @property (nonatomic, assign) CFTimeInterval fastTapAccumulator;
-@property (nonatomic, strong) UITextField *micTextField;
-@property (nonatomic, strong) UILabel *selectedNumberLabel;
 
 + (instancetype)shared;
 - (void)showFloatingButton;
@@ -580,8 +572,7 @@ static void startSilentAudio(void) {
         [self tapRealTarget];
         self.autoTapEnabled = wasOn;
     }
-    NSString *name = (index < (NSInteger)accountNames.count) ? accountNames[index] : @"";
-    [self showToast:[NSString stringWithFormat:@"مايك %ld | %@", (long)(index + 1), name]];
+    [self showToast:[NSString stringWithFormat:@"مايك %ld", (long)(index + 1)]];
 }
 
 #pragma mark - Persistence
@@ -729,50 +720,14 @@ static void startSilentAudio(void) {
     }
     y += 26;
 
-    // Mic selection
-    // Row: label + selected number display + text field + small activate
-    UILabel *micSelectLabel = [[UILabel alloc] initWithFrame:CGRectMake(mx, y + 4, 48, 20)];
-    micSelectLabel.text = @"المايك:";
-    micSelectLabel.textColor = TEXT_PRIMARY;
-    micSelectLabel.font = [UIFont systemFontOfSize:11];
-    micSelectLabel.textAlignment = NSTextAlignmentRight;
-    [self.mainPanel addSubview:micSelectLabel];
+    // Mic number grid: 2 rows of 5 - tap directly fires tap (or saves in capture mode)
+    UILabel *micLabel = [[UILabel alloc] initWithFrame:CGRectMake(mx, y, cw, 14)];
+    micLabel.text = @"اختيار المايك:";
+    micLabel.textColor = TEXT_PRIMARY;
+    micLabel.font = [UIFont systemFontOfSize:10];
+    [self.mainPanel addSubview:micLabel];
+    y += 18;
 
-    self.selectedNumberLabel = [[UILabel alloc] initWithFrame:CGRectMake(mx + 48, y + 2, 22, 24)];
-    self.selectedNumberLabel.text = [NSString stringWithFormat:@"%ld", (long)(self.selectedMicIndex + 1)];
-    self.selectedNumberLabel.textColor = PRIMARY_COLOR;
-    self.selectedNumberLabel.font = [UIFont boldSystemFontOfSize:14];
-    self.selectedNumberLabel.textAlignment = NSTextAlignmentCenter;
-    self.selectedNumberLabel.backgroundColor = BG_CARD;
-    self.selectedNumberLabel.layer.cornerRadius = 6;
-    self.selectedNumberLabel.clipsToBounds = YES;
-    [self.mainPanel addSubview:self.selectedNumberLabel];
-
-    UITextField *micField = [[UITextField alloc] initWithFrame:CGRectMake(mx + 76, y + 2, 42, 24)];
-    micField.backgroundColor = BG_CARD;
-    micField.textColor = TEXT_PRIMARY;
-    micField.font = [UIFont systemFontOfSize:11];
-    micField.textAlignment = NSTextAlignmentCenter;
-    micField.layer.cornerRadius = 6;
-    micField.layer.borderWidth = 0.5;
-    micField.layer.borderColor = PRIMARY_COLOR.CGColor;
-    micField.keyboardType = UIKeyboardTypeNumberPad;
-    micField.text = [NSString stringWithFormat:@"%ld", (long)(self.selectedMicIndex + 1)];
-    self.micTextField = micField;
-    [self.mainPanel addSubview:micField];
-
-    UIButton *smallActBtn = [UIButton buttonWithType:UIButtonTypeCustom];
-    smallActBtn.frame = CGRectMake(mx + 122, y, cw - 122, 28);
-    smallActBtn.backgroundColor = PRIMARY_COLOR;
-    smallActBtn.layer.cornerRadius = 14;
-    [smallActBtn setTitle:@"تفعيل" forState:UIControlStateNormal];
-    [smallActBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    smallActBtn.titleLabel.font = [UIFont boldSystemFontOfSize:11];
-    [smallActBtn addTarget:self action:@selector(activateMicFromField) forControlEvents:UIControlEventTouchUpInside];
-    [self.mainPanel addSubview:smallActBtn];
-    y += 34;
-
-    // Number grid: 2 rows of 5 - tap to SELECT then press big تفعيل below
     CGFloat gBtnW = (cw - 16) / 5;
     for (int i = 0; i < NUM_MICS; i++) {
         int col = i % 5;
@@ -790,24 +745,12 @@ static void startSilentAudio(void) {
     }
     y += 56;
 
-    // Big activate button for grid selection
-    UIButton *bigActBtn = [UIButton buttonWithType:UIButtonTypeCustom];
-    bigActBtn.frame = CGRectMake(mx, y, cw, 32);
-    bigActBtn.backgroundColor = PRIMARY_COLOR;
-    bigActBtn.layer.cornerRadius = 16;
-    [bigActBtn setTitle:@"🔹 تفعيل" forState:UIControlStateNormal];
-    [bigActBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    bigActBtn.titleLabel.font = [UIFont boldSystemFontOfSize:13];
-    [bigActBtn addTarget:self action:@selector(activateSelectedMic) forControlEvents:UIControlEventTouchUpInside];
-    [self.mainPanel addSubview:bigActBtn];
-    y += 38;
-
     // Capture mode toggle
     UIButton *captBtn = [UIButton buttonWithType:UIButtonTypeCustom];
     captBtn.frame = CGRectMake(mx, y, cw, 28);
     captBtn.backgroundColor = self.isCaptureMode ? [UIColor orangeColor] : BG_CARD;
     captBtn.layer.cornerRadius = 14;
-    [captBtn setTitle:@"📍 تصوير الموقع" forState:UIControlStateNormal];
+    [captBtn setTitle:@"📍 تصوير موقع المايكات" forState:UIControlStateNormal];
     [captBtn setTitleColor:self.isCaptureMode ? [UIColor whiteColor] : [UIColor orangeColor] forState:UIControlStateNormal];
     captBtn.titleLabel.font = [UIFont boldSystemFontOfSize:11];
     captBtn.tag = 200;
@@ -988,12 +931,6 @@ static void startSilentAudio(void) {
 }
 
 - (void)updatePanelMicDisplay {
-    if (self.selectedNumberLabel) {
-        self.selectedNumberLabel.text = [NSString stringWithFormat:@"%ld", (long)(self.selectedMicIndex + 1)];
-    }
-    if (self.micTextField) {
-        self.micTextField.text = [NSString stringWithFormat:@"%ld", (long)(self.selectedMicIndex + 1)];
-    }
     // Update number grid buttons in panel (tags 100-109)
     if (self.mainPanel) {
         for (UIView *sub in self.mainPanel.subviews) {
@@ -1023,34 +960,16 @@ static void startSilentAudio(void) {
     [self updatePanelMicDisplay];
 }
 
-- (void)activateMicFromField {
-    NSString *text = self.micTextField.text;
-    NSInteger num = [text integerValue];
-    if (num < 1) num = 1;
-    if (num > NUM_MICS) num = NUM_MICS;
-    self.micTextField.text = [NSString stringWithFormat:@"%ld", (long)num];
-    [self.micTextField resignFirstResponder];
-    [self confirmAndTapMic:num - 1];
-}
-
 - (void)micNumberTapped:(UIButton *)sender {
     NSInteger idx = sender.tag - 100;
     if (idx < 0 || idx >= NUM_MICS) return;
     if (self.isCaptureMode && self.captureDot) {
-        // Save capture dot position to this mic number
         self.capturedPositions[@(idx)] = [NSValue valueWithCGPoint:self.captureDot.center];
-        [self showToast:[NSString stringWithFormat:@"حُفظت مايك %ld ✅", (long)(idx + 1)]];
+        [self showToast:[NSString stringWithFormat:@"مايك %ld ✅", (long)(idx + 1)]];
         [self saveInstanceState];
         return;
     }
-    self.selectedMicIndex = idx;
-    [self updatePanelMicDisplay];
-    [self updateTapDotPosition];
-    [self showToast:[NSString stringWithFormat:@"اختير مايك %ld", (long)(idx + 1)]];
-}
-
-- (void)activateSelectedMic {
-    [self confirmAndTapMic:self.selectedMicIndex];
+    [self confirmAndTapMic:idx];
 }
 
 - (void)stopTap {
