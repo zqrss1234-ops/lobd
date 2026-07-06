@@ -177,6 +177,9 @@ static void ylt_hook_setSuspended(id self, SEL _cmd, BOOL suspended) {
 }
 static BOOL ylt_hook_isSuspended(id self, SEL _cmd) { return NO; }
 static void ylt_hook_willResignActive(id self, SEL _cmd) {}
+
+static void startSilentAudio(void);
+
 static void ylt_hook_didEnterBackground(id self, SEL _cmd) {
     // Restart bg immediately when entering background
     dispatch_async(dispatch_get_main_queue(), ^{
@@ -184,8 +187,6 @@ static void ylt_hook_didEnterBackground(id self, SEL _cmd) {
         startBgTask();
     });
 }
-
-static void startSilentAudio(void);
 
 static void ylt_installBgHook(void) {
     Class app = objc_getClass("UIApplication");
