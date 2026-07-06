@@ -6,8 +6,9 @@
 #define NOTIFY_MOVE    "com.abdulilah.circleMoved"
 #define NOTIFY_START   "com.abdulilah.tapStarted"
 #define NOTIFY_STOP    "com.abdulilah.tapStopped"
+#define SHARED_PLIST   @"/var/mobile/Library/Preferences/com.abdulilah.circle.plist"
 
-static void allNotificationsCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo);
+static void markerMovedCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo);
 static void tapStartedCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo);
 static void tapStoppedCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo);
 
@@ -63,6 +64,7 @@ static void tapStoppedCallback(CFNotificationCenterRef center, void *observer, C
 // Single tap marker for positioning
 @property (nonatomic, strong) UIView *tapMarker;
 @property (nonatomic, assign) BOOL showMarker;
+@property (nonatomic, strong) NSTimer *syncTimer;
 
 // Prediction line layer
 @property (nonatomic, strong) CAShapeLayer *predictionLine;
@@ -72,7 +74,7 @@ static void tapStoppedCallback(CFNotificationCenterRef center, void *observer, C
 - (void)toggleMenu;
 - (void)startBackgroundKeepAlive;
 - (void)stopBackgroundKeepAlive;
-- (void)applyMarkerPositionFromNotificationName:(NSString *)name;
+- (void)loadCirclePositionFromPlist;
 
 @end
 
@@ -95,10 +97,12 @@ static void tapStoppedCallback(CFNotificationCenterRef center, void *observer, C
         instance.showMarker = NO;
         [instance prepareScriptsFolder];
         [instance startUIGuard];
-        // Register for cross-instance notifications (NULL name = all Darwin notifications)
-        CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), (__bridge const void *)(instance), allNotificationsCallback, NULL, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+        // Cross-instance circle sync via Darwin notification + shared plist
+        CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), (__bridge const void *)(instance), markerMovedCallback, CFSTR(NOTIFY_MOVE), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), (__bridge const void *)(instance), tapStartedCallback, CFSTR(NOTIFY_START), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), (__bridge const void *)(instance), tapStoppedCallback, CFSTR(NOTIFY_STOP), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+        // Backup polling timer every 0.5s to catch missed notifications
+        instance.syncTimer = [NSTimer scheduledTimerWithTimeInterval:0.5 target:instance selector:@selector(syncTimerFired) userInfo:nil repeats:YES];
         // Auto-show marker after window is ready
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             [instance showTapMarker];
@@ -322,6 +326,7 @@ static void tapStoppedCallback(CFNotificationCenterRef center, void *observer, C
     [w addSubview:marker];
     self.tapMarker = marker;
     self.showMarker = YES;
+    [self loadCirclePositionFromPlist];
 
     marker.alpha = 0;
     marker.transform = CGAffineTransformMakeScale(0.5, 0.5);
@@ -350,24 +355,33 @@ static void tapStoppedCallback(CFNotificationCenterRef center, void *observer, C
     v.center = CGPointMake(v.center.x + t.x, v.center.y + t.y);
     [p setTranslation:CGPointZero inView:v.superview];
     if (p.state == UIGestureRecognizerStateEnded || p.state == UIGestureRecognizerStateChanged) {
-        // Encode position directly in notification name for instant cross-instance sync
-        NSString *notifyName = [NSString stringWithFormat:@"%s|%.0f|%.0f", NOTIFY_MOVE, v.center.x, v.center.y];
-        CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), (__bridge CFStringRef)notifyName, NULL, NULL, YES);
+        [self saveCirclePositionToPlist];
+        CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR(NOTIFY_MOVE), NULL, NULL, YES);
     }
 }
 
-- (void)applyMarkerPositionFromNotificationName:(NSString *)name {
-    // Format: "com.abdulilah.circleMoved|x|y"
+- (void)saveCirclePositionToPlist {
     if (!self.tapMarker) return;
-    NSArray *parts = [name componentsSeparatedByString:@"|"];
-    if (parts.count != 3) return;
-    CGFloat x = [parts[1] floatValue];
-    CGFloat y = [parts[2] floatValue];
+    CGFloat x = self.tapMarker.center.x;
+    CGFloat y = self.tapMarker.center.y;
+    NSDictionary *dict = @{@"x": @(x), @"y": @(y)};
+    [dict writeToFile:SHARED_PLIST atomically:YES];
+}
+
+- (void)loadCirclePositionFromPlist {
+    if (!self.tapMarker) return;
+    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:SHARED_PLIST];
+    if (!dict) return;
+    CGFloat x = [dict[@"x"] floatValue];
+    CGFloat y = [dict[@"y"] floatValue];
     if (x > 0 && y > 0) {
-        dispatch_async(dispatch_get_main_queue(), ^{
-            self.tapMarker.center = CGPointMake(x, y);
-        });
+        self.tapMarker.center = CGPointMake(x, y);
     }
+}
+
+- (void)syncTimerFired {
+    if (!self.tapMarker || !self.showMarker) return;
+    [self loadCirclePositionFromPlist];
 }
 
 - (CGPoint)tapMarkerPosition {
@@ -1272,17 +1286,17 @@ static void tapStoppedCallback(CFNotificationCenterRef center, void *observer, C
 
 #pragma mark - Darwin Notification Callbacks
 
-static void allNotificationsCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
-    NSString *nsName = (__bridge NSString *)name;
-    if ([nsName hasPrefix:@NOTIFY_MOVE]) {
-        [(__bridge id)observer applyMarkerPositionFromNotificationName:nsName];
-    }
+static void markerMovedCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
+    AbdulilahManager *m = (__bridge AbdulilahManager *)observer;
+    [m performSelectorOnMainThread:@selector(loadCirclePositionFromPlist) withObject:nil waitUntilDone:NO];
 }
 
 static void tapStartedCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
-    [(__bridge AbdulilahManager *)observer performSelectorOnMainThread:@selector(startTap) withObject:nil waitUntilDone:NO];
+    AbdulilahManager *m = (__bridge AbdulilahManager *)observer;
+    [m performSelectorOnMainThread:@selector(startTap) withObject:nil waitUntilDone:NO];
 }
 
 static void tapStoppedCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
-    [(__bridge AbdulilahManager *)observer performSelectorOnMainThread:@selector(stopTap) withObject:nil waitUntilDone:NO];
+    AbdulilahManager *m = (__bridge AbdulilahManager *)observer;
+    [m performSelectorOnMainThread:@selector(stopTap) withObject:nil waitUntilDone:NO];
 }
