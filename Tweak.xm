@@ -11,15 +11,15 @@
 @class AbdulilahManager;
 
 static void markerMovedCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
-    [(__bridge AbdulilahManager *)observer markerPositionDidChange];
+    [(__bridge id)observer markerPositionDidChange];
 }
 
 static void tapStartedCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
-    [(__bridge AbdulilahManager *)observer performSelectorOnMainThread:@selector(startTap) withObject:nil waitUntilDone:NO];
+    [(__bridge id)observer performSelectorOnMainThread:@selector(startTap) withObject:nil waitUntilDone:NO];
 }
 
 static void tapStoppedCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
-    [(__bridge AbdulilahManager *)observer performSelectorOnMainThread:@selector(stopTap) withObject:nil waitUntilDone:NO];
+    [(__bridge id)observer performSelectorOnMainThread:@selector(stopTap) withObject:nil waitUntilDone:NO];
 }
 
 #define PRIMARY_COLOR    [UIColor colorWithRed:0.00 green:0.60 blue:1.00 alpha:1.0]
