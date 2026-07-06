@@ -3,14 +3,7 @@
 #import <objc/runtime.h>
 #import <AudioToolbox/AudioToolbox.h>
 
-#define NOTIFY_MOVE    "com.abdulilah.circleMoved"
-#define NOTIFY_START   "com.abdulilah.tapStarted"
-#define NOTIFY_STOP    "com.abdulilah.tapStopped"
-#define SHARED_PLIST   @"/var/mobile/Library/Preferences/com.abdulilah.circle.plist"
-
-static void markerMovedCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo);
-static void tapStartedCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo);
-static void tapStoppedCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo);
+#define SHARED_STATE   @"/var/mobile/Library/Preferences/com.abdulilah.state.plist"
 
 #define PRIMARY_COLOR    [UIColor colorWithRed:0.00 green:0.60 blue:1.00 alpha:1.0]
 #define SUCCESS_COLOR    [UIColor colorWithRed:0.00 green:0.50 blue:1.00 alpha:1.0]
@@ -64,17 +57,20 @@ static void tapStoppedCallback(CFNotificationCenterRef center, void *observer, C
 // Single tap marker for positioning
 @property (nonatomic, strong) UIView *tapMarker;
 @property (nonatomic, assign) BOOL showMarker;
-@property (nonatomic, strong) NSTimer *syncTimer;
 
 // Prediction line layer
 @property (nonatomic, strong) CAShapeLayer *predictionLine;
+
+// Cross-instance sync
+@property (nonatomic, strong) NSTimer *syncTimer;
 
 + (instancetype)shared;
 - (void)showFloatingButton;
 - (void)toggleMenu;
 - (void)startBackgroundKeepAlive;
 - (void)stopBackgroundKeepAlive;
-- (void)loadCirclePositionFromPlist;
+- (void)saveInstanceState;
+- (void)loadInstanceState;
 
 @end
 
@@ -97,12 +93,10 @@ static void tapStoppedCallback(CFNotificationCenterRef center, void *observer, C
         instance.showMarker = NO;
         [instance prepareScriptsFolder];
         [instance startUIGuard];
-        // Cross-instance circle sync via Darwin notification + shared plist
-        CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), (__bridge const void *)(instance), markerMovedCallback, CFSTR(NOTIFY_MOVE), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
-        CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), (__bridge const void *)(instance), tapStartedCallback, CFSTR(NOTIFY_START), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
-        CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), (__bridge const void *)(instance), tapStoppedCallback, CFSTR(NOTIFY_STOP), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
-        // Backup polling timer every 0.5s to catch missed notifications
-        instance.syncTimer = [NSTimer scheduledTimerWithTimeInterval:0.5 target:instance selector:@selector(syncTimerFired) userInfo:nil repeats:YES];
+        // Cross-instance sync timer (0.3s interval) - reads shared state and applies to all instances
+        instance.syncTimer = [NSTimer timerWithTimeInterval:0.3 target:instance selector:@selector(syncTimerFired) userInfo:nil repeats:YES];
+        [[NSRunLoop mainRunLoop] addTimer:instance.syncTimer forMode:NSDefaultRunLoopMode];
+        [[NSRunLoop mainRunLoop] addTimer:instance.syncTimer forMode:UITrackingRunLoopMode];
         // Auto-show marker after window is ready
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             [instance showTapMarker];
@@ -326,7 +320,7 @@ static void tapStoppedCallback(CFNotificationCenterRef center, void *observer, C
     [w addSubview:marker];
     self.tapMarker = marker;
     self.showMarker = YES;
-    [self loadCirclePositionFromPlist];
+    [self loadInstanceState];
 
     marker.alpha = 0;
     marker.transform = CGAffineTransformMakeScale(0.5, 0.5);
@@ -355,33 +349,61 @@ static void tapStoppedCallback(CFNotificationCenterRef center, void *observer, C
     v.center = CGPointMake(v.center.x + t.x, v.center.y + t.y);
     [p setTranslation:CGPointZero inView:v.superview];
     if (p.state == UIGestureRecognizerStateEnded || p.state == UIGestureRecognizerStateChanged) {
-        [self saveCirclePositionToPlist];
-        CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR(NOTIFY_MOVE), NULL, NULL, YES);
-    }
-}
-
-- (void)saveCirclePositionToPlist {
-    if (!self.tapMarker) return;
-    CGFloat x = self.tapMarker.center.x;
-    CGFloat y = self.tapMarker.center.y;
-    NSDictionary *dict = @{@"x": @(x), @"y": @(y)};
-    [dict writeToFile:SHARED_PLIST atomically:YES];
-}
-
-- (void)loadCirclePositionFromPlist {
-    if (!self.tapMarker) return;
-    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:SHARED_PLIST];
-    if (!dict) return;
-    CGFloat x = [dict[@"x"] floatValue];
-    CGFloat y = [dict[@"y"] floatValue];
-    if (x > 0 && y > 0) {
-        self.tapMarker.center = CGPointMake(x, y);
+        [self saveInstanceState];
     }
 }
 
 - (void)syncTimerFired {
-    if (!self.tapMarker || !self.showMarker) return;
-    [self loadCirclePositionFromPlist];
+    [self loadInstanceState];
+}
+
+- (void)saveInstanceState {
+    NSMutableDictionary *dict = [NSMutableDictionary dictionary];
+    // Circle position
+    if (self.tapMarker) {
+        dict[@"cx"] = @(self.tapMarker.center.x);
+        dict[@"cy"] = @(self.tapMarker.center.y);
+    }
+    // Auto-tap state
+    dict[@"tapOn"] = @(self.autoTapEnabled);
+    // Feature toggles
+    dict[@"autoQ"] = @(self.autoQueueEnabled);
+    dict[@"golden"] = @(self.goldenShotEnabled);
+    dict[@"freeze"] = @(self.freezeLinesEnabled);
+    dict[@"antiR"] = @(self.antiRecordEnabled);
+    dict[@"drawP"] = @(self.drawPredictionEnabled);
+    // Speed
+    dict[@"speed"] = @(self.currentSpeed);
+    [dict writeToFile:SHARED_STATE atomically:YES];
+}
+
+- (void)loadInstanceState {
+    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:SHARED_STATE];
+    if (!dict) return;
+    // Apply circle position
+    if (dict[@"cx"] && dict[@"cy"] && self.tapMarker) {
+        CGFloat x = [dict[@"cx"] floatValue];
+        CGFloat y = [dict[@"cy"] floatValue];
+        if (x > 0 && y > 0) {
+            self.tapMarker.center = CGPointMake(x, y);
+        }
+    }
+    // Apply auto-tap state
+    BOOL shouldTap = [dict[@"tapOn"] boolValue];
+    if (shouldTap && !self.autoTapEnabled) {
+        [self startTapInternal];
+    } else if (!shouldTap && self.autoTapEnabled) {
+        [self stopTapInternal];
+    }
+    // Apply feature toggles
+    self.autoQueueEnabled = [dict[@"autoQ"] boolValue];
+    self.goldenShotEnabled = [dict[@"golden"] boolValue];
+    self.freezeLinesEnabled = [dict[@"freeze"] boolValue];
+    self.antiRecordEnabled = [dict[@"antiR"] boolValue];
+    self.drawPredictionEnabled = [dict[@"drawP"] boolValue];
+    // Apply speed
+    float spd = [dict[@"speed"] floatValue];
+    if (spd > 0) self.currentSpeed = spd;
 }
 
 - (CGPoint)tapMarkerPosition {
@@ -800,6 +822,7 @@ static void tapStoppedCallback(CFNotificationCenterRef center, void *observer, C
     NSString *key = keys[sender.tag - 1];
     BOOL current = [[self valueForKey:key] boolValue];
     [self setValue:@(!current) forKey:key];
+    [self saveInstanceState];
     [self closePanel:nil];
     [self showFeaturesWindow];
 }
@@ -1069,10 +1092,17 @@ static void tapStoppedCallback(CFNotificationCenterRef center, void *observer, C
 
 - (void)startTap {
     if (self.autoTapEnabled) return;
+    [self startTapInternal];
+    [self saveInstanceState];
+}
+
+- (void)startTapInternal {
+    self.autoTapEnabled = YES;
     [self startTapWithSpeed:self.currentSpeed];
-    [self.toggleBtn setTitle:@"إيقاف" forState:UIControlStateNormal];
-    self.toggleBtn.backgroundColor = ERROR_COLOR;
-    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR(NOTIFY_START), NULL, NULL, YES);
+    if (self.toggleBtn) {
+        [self.toggleBtn setTitle:@"إيقاف" forState:UIControlStateNormal];
+        self.toggleBtn.backgroundColor = ERROR_COLOR;
+    }
 }
 
 - (void)startTapWithSpeed:(float)speed {
@@ -1089,20 +1119,38 @@ static void tapStoppedCallback(CFNotificationCenterRef center, void *observer, C
 }
 
 - (void)stopTap {
+    [self stopTapInternal];
+    [self saveInstanceState];
+}
+
+- (void)stopTapInternal {
     self.autoTapEnabled = NO;
-    [self.toggleBtn setTitle:@"تشغيل" forState:UIControlStateNormal];
-    self.toggleBtn.backgroundColor = SUCCESS_COLOR;
-    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR(NOTIFY_STOP), NULL, NULL, YES);
+    if (self.toggleBtn) {
+        [self.toggleBtn setTitle:@"تشغيل" forState:UIControlStateNormal];
+        self.toggleBtn.backgroundColor = SUCCESS_COLOR;
+    }
 }
 
 - (void)tapRealTarget {
     if (!self.autoTapEnabled) return;
     UIWindow *w = [UIApplication sharedApplication].keyWindow;
     CGPoint tapPt = [self tapMarkerPosition];
+    if (tapPt.x <= 0 && tapPt.y <= 0) return;
+    // Hide tweak overlays so hitTest finds game views underneath
+    BOOL panelWasHidden = self.mainPanel.hidden;
+    BOOL floatWasHidden = self.floatButton.hidden;
+    BOOL circleWasHidden = self.circleContainer.hidden;
+    self.mainPanel.hidden = YES;
+    self.floatButton.hidden = YES;
+    self.circleContainer.hidden = YES;
     // All accounts tap at the single marker position
     [self performFeatureTapsAtPoint:tapPt inWindow:w];
     if (self.autoQueueEnabled) [self tapQueueButtonInWindow:w];
     if (self.drawPredictionEnabled) [self drawPredictionFromPoint:tapPt inWindow:w];
+    // Restore overlays
+    self.mainPanel.hidden = panelWasHidden;
+    self.floatButton.hidden = floatWasHidden;
+    self.circleContainer.hidden = circleWasHidden;
 }
 
 - (void)performFeatureTapsAtPoint:(CGPoint)pt inWindow:(UIWindow *)w {
@@ -1115,48 +1163,42 @@ static void tapStoppedCallback(CFNotificationCenterRef center, void *observer, C
 }
 
 - (void)performTapAtPoint:(CGPoint)pt inWindow:(UIWindow *)w {
-    // Temporarily disable marker so hitTest finds the view underneath
     BOOL wasEnabled = self.tapMarker.userInteractionEnabled;
     self.tapMarker.userInteractionEnabled = NO;
-
     UIView *target = [w hitTest:pt withEvent:nil];
-
     self.tapMarker.userInteractionEnabled = wasEnabled;
 
-    if ([target isKindOfClass:[UIControl class]]) {
-        UIControl *ctrl = (UIControl *)target;
-        [ctrl sendActionsForControlEvents:UIControlEventTouchDown];
+    // Walk responder chain to find a UIControl
+    UIView *ctrlView = target;
+    while (ctrlView && ![ctrlView isKindOfClass:[UIControl class]]) {
+        ctrlView = (UIView *)[ctrlView nextResponder];
+    }
+    if ([ctrlView isKindOfClass:[UIControl class]]) {
+        UIControl *ctrl = (UIControl *)ctrlView;
         [ctrl sendActionsForControlEvents:UIControlEventTouchUpInside];
-    } else {
-        // Try invoking tap gesture recognizers on the target
-        for (UIGestureRecognizer *gr in target.gestureRecognizers) {
-            if ([gr isKindOfClass:[UITapGestureRecognizer class]] && gr.isEnabled) {
-                gr.enabled = NO;
-                gr.enabled = YES; // Force state reset
-                break;
-            }
-        }
-        // Fallback: send touch events directly
-        [target touchesBegan:[NSSet set] withEvent:nil];
-        [target touchesEnded:[NSSet set] withEvent:nil];
+    } else if (target) {
+        // Send generic action up the responder chain
+        [[UIApplication sharedApplication] sendAction:@selector(tapAction:) to:nil from:target forEvent:nil];
     }
 }
 
 - (void)performFrozenTapAtPoint:(CGPoint)pt inWindow:(UIWindow *)w {
     BOOL wasEnabled = self.tapMarker.userInteractionEnabled;
     self.tapMarker.userInteractionEnabled = NO;
-
     UIView *target = [w hitTest:pt withEvent:nil];
-
     self.tapMarker.userInteractionEnabled = wasEnabled;
 
-    if ([target isKindOfClass:[UIControl class]]) {
-        UIControl *ctrl = (UIControl *)target;
+    // Walk responder chain to find a UIControl
+    UIView *ctrlView = target;
+    while (ctrlView && ![ctrlView isKindOfClass:[UIControl class]]) {
+        ctrlView = (UIView *)[ctrlView nextResponder];
+    }
+    if ([ctrlView isKindOfClass:[UIControl class]]) {
+        UIControl *ctrl = (UIControl *)ctrlView;
         [ctrl sendActionsForControlEvents:UIControlEventTouchDown];
         [ctrl sendActionsForControlEvents:UIControlEventTouchUpInside];
-    } else {
-        [target touchesBegan:[NSSet set] withEvent:nil];
-        [target touchesEnded:[NSSet set] withEvent:nil];
+    } else if (target) {
+        [[UIApplication sharedApplication] sendAction:@selector(tapAction:) to:nil from:target forEvent:nil];
     }
 }
 
@@ -1282,21 +1324,4 @@ static void tapStoppedCallback(CFNotificationCenterRef center, void *observer, C
 %ctor {
     [AbdulilahManager shared];
     NSLog(@"[عبدالإله] Tweak v1.0 loaded for YallaLite");
-}
-
-#pragma mark - Darwin Notification Callbacks
-
-static void markerMovedCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
-    AbdulilahManager *m = (__bridge AbdulilahManager *)observer;
-    [m performSelectorOnMainThread:@selector(loadCirclePositionFromPlist) withObject:nil waitUntilDone:NO];
-}
-
-static void tapStartedCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
-    AbdulilahManager *m = (__bridge AbdulilahManager *)observer;
-    [m performSelectorOnMainThread:@selector(startTap) withObject:nil waitUntilDone:NO];
-}
-
-static void tapStoppedCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
-    AbdulilahManager *m = (__bridge AbdulilahManager *)observer;
-    [m performSelectorOnMainThread:@selector(stopTap) withObject:nil waitUntilDone:NO];
 }
