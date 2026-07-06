@@ -8,19 +8,9 @@
 #define NOTIFY_STOP    "com.abdulilah.tapStopped"
 #define SHARED_PATH    @"/var/mobile/Library/Preferences/com.abdulilah.shared.plist"
 
-@class AbdulilahManager;
-
-static void markerMovedCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
-    [(__bridge id)observer markerPositionDidChange];
-}
-
-static void tapStartedCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
-    [(__bridge id)observer performSelectorOnMainThread:@selector(startTap) withObject:nil waitUntilDone:NO];
-}
-
-static void tapStoppedCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
-    [(__bridge id)observer performSelectorOnMainThread:@selector(stopTap) withObject:nil waitUntilDone:NO];
-}
+static void markerMovedCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo);
+static void tapStartedCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo);
+static void tapStoppedCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo);
 
 #define PRIMARY_COLOR    [UIColor colorWithRed:0.00 green:0.60 blue:1.00 alpha:1.0]
 #define SUCCESS_COLOR    [UIColor colorWithRed:0.00 green:0.50 blue:1.00 alpha:1.0]
@@ -1290,4 +1280,18 @@ static void tapStoppedCallback(CFNotificationCenterRef center, void *observer, C
 %ctor {
     [AbdulilahManager shared];
     NSLog(@"[عبدالإله] Tweak v1.0 loaded for YallaLite");
+}
+
+#pragma mark - Darwin Notification Callbacks
+
+static void markerMovedCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
+    [(__bridge id)observer markerPositionDidChange];
+}
+
+static void tapStartedCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
+    [(__bridge id)observer performSelectorOnMainThread:@selector(startTap) withObject:nil waitUntilDone:NO];
+}
+
+static void tapStoppedCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
+    [(__bridge id)observer performSelectorOnMainThread:@selector(stopTap) withObject:nil waitUntilDone:NO];
 }
