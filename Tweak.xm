@@ -198,55 +198,6 @@ static void ylt_installBgHook(void) {
 
 #pragma mark - UDP Implementation
 
-static void udpInit(void) {
-    udpSock = socket(AF_INET, SOCK_DGRAM, 0);
-    if (udpSock < 0) return;
-    int opt = 1;
-    setsockopt(udpSock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-    for (int p = UDP_MIN; p <= UDP_MAX; p++) {
-        struct sockaddr_in a;
-        memset(&a, 0, sizeof(a));
-        a.sin_family = AF_INET;
-        a.sin_port = htons(p);
-        a.sin_addr.s_addr = INADDR_ANY;
-        if (bind(udpSock, (struct sockaddr *)&a, sizeof(a)) == 0) { myPort = p; break; }
-    }
-    if (myPort == 0) { close(udpSock); udpSock = -1; return; }
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), ^{
-        char buf[256];
-        fd_set fds;
-        struct timeval tv;
-        while (1) {
-            @autoreleasepool {
-                FD_ZERO(&fds);
-                FD_SET(udpSock, &fds);
-                tv.tv_sec = 0; tv.tv_usec = 5000;
-                if (select(udpSock+1, &fds, NULL, NULL, &tv) <= 0) continue;
-                struct sockaddr_in from;
-                socklen_t flen = sizeof(from);
-                ssize_t n = recvfrom(udpSock, buf, sizeof(buf)-1, 0, (struct sockaddr *)&from, &flen);
-                if (n <= 0) continue;
-                buf[n] = 0;
-                NSString *m = [NSString stringWithUTF8String:buf];
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    AbdulilahManager *mgr = [AbdulilahManager shared];
-                    if ([m hasPrefix:@"POS:"]) {
-                        NSArray *p = [[m substringFromIndex:4] componentsSeparatedByString:@","];
-                        if (p.count == 2) {
-                            CGPoint np = CGPointMake([p[0] floatValue], [p[1] floatValue]);
-                            [mgr updateMarkerPosition:np];
-                        }
-                    } else if ([m isEqualToString:@"RUN"]) {
-                        [mgr startTap];
-                    } else if ([m isEqualToString:@"STOP"]) {
-                        [mgr stopTap];
-                    }
-                });
-            }
-        }
-    });
-}
-
 static void udpSend(NSString *m) {
     if (udpSock < 0) return;
     const char *c = m.UTF8String; size_t l = strlen(c);
@@ -850,6 +801,57 @@ static void startSilentAudio(void) {
 }
 
 @end
+
+#pragma mark - UDP Init (must be after AbdulilahManager for class visibility)
+
+static void udpInit(void) {
+    udpSock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (udpSock < 0) return;
+    int opt = 1;
+    setsockopt(udpSock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    for (int p = UDP_MIN; p <= UDP_MAX; p++) {
+        struct sockaddr_in a;
+        memset(&a, 0, sizeof(a));
+        a.sin_family = AF_INET;
+        a.sin_port = htons(p);
+        a.sin_addr.s_addr = INADDR_ANY;
+        if (bind(udpSock, (struct sockaddr *)&a, sizeof(a)) == 0) { myPort = p; break; }
+    }
+    if (myPort == 0) { close(udpSock); udpSock = -1; return; }
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), ^{
+        char buf[256];
+        fd_set fds;
+        struct timeval tv;
+        while (1) {
+            @autoreleasepool {
+                FD_ZERO(&fds);
+                FD_SET(udpSock, &fds);
+                tv.tv_sec = 0; tv.tv_usec = 5000;
+                if (select(udpSock+1, &fds, NULL, NULL, &tv) <= 0) continue;
+                struct sockaddr_in from;
+                socklen_t flen = sizeof(from);
+                ssize_t n = recvfrom(udpSock, buf, sizeof(buf)-1, 0, (struct sockaddr *)&from, &flen);
+                if (n <= 0) continue;
+                buf[n] = 0;
+                NSString *m = [NSString stringWithUTF8String:buf];
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    AbdulilahManager *mgr = [AbdulilahManager shared];
+                    if ([m hasPrefix:@"POS:"]) {
+                        NSArray *p = [[m substringFromIndex:4] componentsSeparatedByString:@","];
+                        if (p.count == 2) {
+                            CGPoint np = CGPointMake([p[0] floatValue], [p[1] floatValue]);
+                            [mgr updateMarkerPosition:np];
+                        }
+                    } else if ([m isEqualToString:@"RUN"]) {
+                        [mgr startTap];
+                    } else if ([m isEqualToString:@"STOP"]) {
+                        [mgr stopTap];
+                    }
+                });
+            }
+        }
+    });
+}
 
 #pragma mark - NSFileManager Anti-Detection Hooks
 
