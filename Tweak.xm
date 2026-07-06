@@ -628,7 +628,7 @@ static void startSilentAudio(void) {
     y += 28;
 
     UILabel *mergeLabel = [[UILabel alloc] initWithFrame:CGRectMake(12, y, pw - 24, 16)];
-    mergeLabel.text = @"الحسابات مرتبطه";
+    mergeLabel.text = @"تم ربط الحسابات تلقائياً";
     mergeLabel.textColor = [UIColor greenColor];
     mergeLabel.font = [UIFont systemFontOfSize:10];
     mergeLabel.textAlignment = NSTextAlignmentCenter;
