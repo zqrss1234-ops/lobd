@@ -297,6 +297,9 @@ static void startSilentAudio(void) {
 
 @property (nonatomic, assign) NSInteger selectedMicIndex;
 @property (nonatomic, strong) UIView *tapDot;
+@property (nonatomic, assign) BOOL isCaptureMode;
+@property (nonatomic, strong) UIView *captureDot;
+@property (nonatomic, strong) NSMutableDictionary *capturedPositions;
 
 @property (nonatomic, strong) AbdulilahOverlayWindow *overlayWindow;
 
@@ -332,6 +335,8 @@ static void startSilentAudio(void) {
         instance.currentSpeed = 0.008f;
         instance.transparencyValue = 1.0;
         instance.selectedMicIndex = 0;
+        instance.isCaptureMode = NO;
+        instance.capturedPositions = [NSMutableDictionary dictionary];
         [instance startUIGuard];
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             [instance showTapDot];
@@ -371,9 +376,12 @@ static void startSilentAudio(void) {
         [self.overlayWindow bringSubviewToFront:self.mainPanel];
     }
     if (!self.tapDot || self.tapDot.superview != self.overlayWindow) {
-        [self showTapDot];
+        if (!self.isCaptureMode) [self showTapDot];
     } else {
         [self.overlayWindow bringSubviewToFront:self.tapDot];
+    }
+    if (self.isCaptureMode && (!self.captureDot || self.captureDot.superview != self.overlayWindow)) {
+        [self showCaptureDot];
     }
     if (!silentPlayer || !silentPlayer.isPlaying) {
         startSilentAudio();
@@ -384,10 +392,7 @@ static void startSilentAudio(void) {
 }
 
 - (CGPoint)selectedMicPosition {
-    CGSize sz = [UIScreen mainScreen].bounds.size;
-    CGFloat x = sz.width * micPositions[self.selectedMicIndex][0];
-    CGFloat y = sz.height * micPositions[self.selectedMicIndex][1];
-    return CGPointMake(x, y);
+    return [self positionForMic:self.selectedMicIndex];
 }
 
 #pragma mark - Floating Button
@@ -455,13 +460,24 @@ static void startSilentAudio(void) {
 
 #pragma mark - Tap Dot & Mic Selection
 
+- (CGPoint)positionForMic:(NSInteger)index {
+    // Check calibrated position first
+    NSValue *val = self.capturedPositions[@(index)];
+    if (val) return [val CGPointValue];
+    // Fall back to default percentage-based position
+    CGSize sz = [UIScreen mainScreen].bounds.size;
+    CGFloat x = sz.width * micPositions[index][0];
+    CGFloat y = sz.height * micPositions[index][1];
+    return CGPointMake(x, y);
+}
+
 - (void)showTapDot {
     if (self.tapDot) {
         [self.tapDot removeFromSuperview];
         self.tapDot = nil;
     }
     UIWindow *w = self.overlayWindow;
-    CGPoint pos = [self selectedMicPosition];
+    CGPoint pos = [self positionForMic:self.selectedMicIndex];
     CGFloat ds = 10;
     UIView *dot = [[UIView alloc] initWithFrame:CGRectMake(pos.x - ds/2, pos.y - ds/2, ds, ds)];
     dot.backgroundColor = PRIMARY_COLOR;
@@ -475,9 +491,75 @@ static void startSilentAudio(void) {
 
 - (void)updateTapDotPosition {
     if (!self.tapDot) { [self showTapDot]; return; }
-    CGPoint pos = [self selectedMicPosition];
+    CGPoint pos = [self positionForMic:self.selectedMicIndex];
     self.tapDot.center = pos;
 }
+
+#pragma mark - Capture Mode
+
+- (void)showCaptureDot {
+    UIWindow *w = self.overlayWindow;
+    if (self.captureDot) {
+        [self.captureDot removeFromSuperview];
+        self.captureDot = nil;
+    }
+    CGPoint pos = [self positionForMic:self.selectedMicIndex];
+    CGFloat cs = 36;
+    UIView *dot = [[UIView alloc] initWithFrame:CGRectMake(pos.x - cs/2, pos.y - cs/2, cs, cs)];
+    dot.backgroundColor = [UIColor clearColor];
+    dot.layer.cornerRadius = cs / 2;
+    dot.layer.borderWidth = 2.5;
+    dot.layer.borderColor = [UIColor yellowColor].CGColor;
+    dot.userInteractionEnabled = YES;
+
+    UILabel *cross = [[UILabel alloc] initWithFrame:dot.bounds];
+    cross.text = @"+";
+    cross.textColor = [UIColor yellowColor];
+    cross.font = [UIFont boldSystemFontOfSize:20];
+    cross.textAlignment = NSTextAlignmentCenter;
+    [dot addSubview:cross];
+
+    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handleCaptureDotPan:)];
+    [dot addGestureRecognizer:pan];
+
+    [w addSubview:dot];
+    self.captureDot = dot;
+    [self showToast:@"اسحب النقطة على المايك واضغط رقمه"];
+}
+
+- (void)hideCaptureDot {
+    if (self.captureDot) {
+        [self.captureDot removeFromSuperview];
+        self.captureDot = nil;
+    }
+}
+
+- (void)handleCaptureDotPan:(UIPanGestureRecognizer *)p {
+    UIView *v = p.view;
+    CGPoint t = [p translationInView:v.superview];
+    v.center = CGPointMake(v.center.x + t.x, v.center.y + t.y);
+    [p setTranslation:CGPointZero inView:v.superview];
+    if (p.state == UIGestureRecognizerStateEnded) {
+        self.cachedTapTarget = nil;
+        self.cachedGameWindow = nil;
+    }
+}
+
+- (void)toggleCaptureMode {
+    self.isCaptureMode = !self.isCaptureMode;
+    if (self.isCaptureMode) {
+        if (self.tapDot) { self.tapDot.hidden = YES; }
+        [self showCaptureDot];
+    } else {
+        [self hideCaptureDot];
+        if (self.tapDot) { self.tapDot.hidden = NO; }
+        [self updateTapDotPosition];
+        [self saveInstanceState];
+    }
+    [self updatePanelMicDisplay];
+}
+
+#pragma mark - Selection & Activation
 
 - (void)selectMicAtIndex:(NSInteger)index {
     if (index < 0 || index >= NUM_MICS) return;
@@ -492,7 +574,6 @@ static void startSilentAudio(void) {
 
 - (void)confirmAndTapMic:(NSInteger)index {
     [self selectMicAtIndex:index];
-    // Fire a single tap to raise/pull the mic in-game (even if auto-tap is off)
     if (self.tapDot) {
         BOOL wasOn = self.autoTapEnabled;
         self.autoTapEnabled = YES;
@@ -510,6 +591,15 @@ static void startSilentAudio(void) {
     dict[@"micIdx"] = @(self.selectedMicIndex);
     dict[@"tapOn"] = @(self.autoTapEnabled);
     dict[@"speed"] = @(self.currentSpeed);
+    // Save calibrated positions
+    if (self.capturedPositions.count > 0) {
+        NSMutableDictionary *posDict = [NSMutableDictionary dictionary];
+        for (NSNumber *key in self.capturedPositions) {
+            CGPoint pt = [self.capturedPositions[key] CGPointValue];
+            posDict[[key stringValue]] = @[@(pt.x), @(pt.y)];
+        }
+        dict[@"calibrated"] = posDict;
+    }
     [dict writeToFile:SHARED_STATE atomically:YES];
 }
 
@@ -521,6 +611,18 @@ static void startSilentAudio(void) {
         NSInteger idx = [mi integerValue];
         if (idx >= 0 && idx < NUM_MICS) {
             self.selectedMicIndex = idx;
+        }
+    }
+    // Load calibrated positions
+    NSDictionary *cal = dict[@"calibrated"];
+    if (cal) {
+        [self.capturedPositions removeAllObjects];
+        for (NSString *key in cal) {
+            NSArray *arr = cal[key];
+            if (arr.count == 2) {
+                CGPoint pt = CGPointMake([arr[0] floatValue], [arr[1] floatValue]);
+                self.capturedPositions[@([key integerValue])] = [NSValue valueWithCGPoint:pt];
+            }
         }
     }
     float spd = [dict[@"speed"] floatValue];
@@ -699,6 +801,19 @@ static void startSilentAudio(void) {
     [bigActBtn addTarget:self action:@selector(activateSelectedMic) forControlEvents:UIControlEventTouchUpInside];
     [self.mainPanel addSubview:bigActBtn];
     y += 38;
+
+    // Capture mode toggle
+    UIButton *captBtn = [UIButton buttonWithType:UIButtonTypeCustom];
+    captBtn.frame = CGRectMake(mx, y, cw, 28);
+    captBtn.backgroundColor = self.isCaptureMode ? [UIColor orangeColor] : BG_CARD;
+    captBtn.layer.cornerRadius = 14;
+    [captBtn setTitle:@"📍 تصوير الموقع" forState:UIControlStateNormal];
+    [captBtn setTitleColor:self.isCaptureMode ? [UIColor whiteColor] : [UIColor orangeColor] forState:UIControlStateNormal];
+    captBtn.titleLabel.font = [UIFont boldSystemFontOfSize:11];
+    captBtn.tag = 200;
+    [captBtn addTarget:self action:@selector(toggleCaptureMode) forControlEvents:UIControlEventTouchUpInside];
+    [self.mainPanel addSubview:captBtn];
+    y += 34;
 
     // Merge label
     UILabel *mergeLabel = [[UILabel alloc] initWithFrame:CGRectMake(mx, y, cw, 14)];
@@ -891,6 +1006,13 @@ static void startSilentAudio(void) {
                     [btn setTitleColor:active ? [UIColor whiteColor] : PRIMARY_COLOR forState:UIControlStateNormal];
                 }
             }
+            // Update capture button (tag 200)
+            if ([sub isKindOfClass:[UIButton class]] && sub.tag == 200) {
+                UIButton *cb = (UIButton *)sub;
+                cb.backgroundColor = self.isCaptureMode ? [UIColor orangeColor] : BG_CARD;
+                [cb setTitleColor:self.isCaptureMode ? [UIColor whiteColor] : [UIColor orangeColor] forState:UIControlStateNormal];
+                [cb setTitle:self.isCaptureMode ? @"📍 تصوير الموقع" : @"📍 تصوير الموقع" forState:UIControlStateNormal];
+            }
         }
     }
 }
@@ -913,12 +1035,18 @@ static void startSilentAudio(void) {
 
 - (void)micNumberTapped:(UIButton *)sender {
     NSInteger idx = sender.tag - 100;
-    if (idx >= 0 && idx < NUM_MICS) {
-        self.selectedMicIndex = idx;
-        [self updatePanelMicDisplay];
-        [self updateTapDotPosition];
-        [self showToast:[NSString stringWithFormat:@"اختير مايك %ld", (long)(idx + 1)]];
+    if (idx < 0 || idx >= NUM_MICS) return;
+    if (self.isCaptureMode && self.captureDot) {
+        // Save capture dot position to this mic number
+        self.capturedPositions[@(idx)] = [NSValue valueWithCGPoint:self.captureDot.center];
+        [self showToast:[NSString stringWithFormat:@"حُفظت مايك %ld ✅", (long)(idx + 1)]];
+        [self saveInstanceState];
+        return;
     }
+    self.selectedMicIndex = idx;
+    [self updatePanelMicDisplay];
+    [self updateTapDotPosition];
+    [self showToast:[NSString stringWithFormat:@"اختير مايك %ld", (long)(idx + 1)]];
 }
 
 - (void)activateSelectedMic {
@@ -1355,6 +1483,7 @@ static void ym_signalHandler(int sig) {
             AbdulilahManager *m = [AbdulilahManager shared];
             if (m.mainPanel) { [m.mainPanel removeFromSuperview]; m.mainPanel = nil; }
             if (!m.tapDot) { [m showTapDot]; }
+            if (m.isCaptureMode && !m.captureDot) { [m showCaptureDot]; }
         }];
         [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidBecomeActiveNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
             if (bgTask != UIBackgroundTaskInvalid) {
