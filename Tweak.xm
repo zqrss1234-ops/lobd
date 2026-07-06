@@ -32,6 +32,22 @@ static NSArray<NSString *> *accountNames = @[
     @"الكايد", @"الشمامره", @"الهباس"
 ];
 
+#define NUM_MICS 10
+
+// Mic positions as percentages of screen width/height
+static const CGFloat micPositions[NUM_MICS][2] = {
+    {0.80, 0.30}, // mic 1
+    {0.65, 0.30}, // mic 2
+    {0.50, 0.30}, // mic 3
+    {0.35, 0.30}, // mic 4
+    {0.20, 0.30}, // mic 5
+    {0.80, 0.42}, // mic 6
+    {0.65, 0.42}, // mic 7
+    {0.50, 0.42}, // mic 8
+    {0.35, 0.42}, // mic 9
+    {0.20, 0.42}, // mic 10
+};
+
 #pragma mark - UDP IPC
 
 static int udpSock = -1;
@@ -291,8 +307,8 @@ static void startSilentAudio(void) {
 @property (nonatomic, assign) float transparencyValue;
 @property (nonatomic, strong) NSTimer *uiGuardTimer;
 
-@property (nonatomic, strong) UIView *tapMarker;
-@property (nonatomic, assign) BOOL showMarker;
+@property (nonatomic, assign) NSInteger selectedMicIndex;
+@property (nonatomic, strong) NSMutableArray<UIView *> *positionIndicators;
 
 @property (nonatomic, strong) AbdulilahOverlayWindow *overlayWindow;
 
@@ -302,12 +318,16 @@ static void startSilentAudio(void) {
 @property (nonatomic, strong) NSObject *tapTimerLock;
 @property (nonatomic, assign) dispatch_source_t tapTimer;
 
+@property (nonatomic, strong) CADisplayLink *fastTapLink;
+@property (nonatomic, assign) CFTimeInterval fastTapAccumulator;
+@property (nonatomic, strong) UITextField *micTextField;
+
 + (instancetype)shared;
 - (void)showFloatingButton;
 - (void)toggleMenu;
 - (void)saveInstanceState;
 - (void)loadInstanceState;
-- (void)updateMarkerPosition:(CGPoint)pos;
+- (void)selectMicAtIndex:(NSInteger)index;
 - (void)startTap;
 - (void)stopTap;
 
@@ -322,10 +342,11 @@ static void startSilentAudio(void) {
         instance = [[AbdulilahManager alloc] init];
         instance.currentSpeed = 0.008f;
         instance.transparencyValue = 1.0;
-        instance.showMarker = NO;
+        instance.selectedMicIndex = 0;
+        instance.positionIndicators = [NSMutableArray array];
         [instance startUIGuard];
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            [instance showTapMarker];
+            [instance showPositionIndicators];
         });
         [instance loadInstanceState];
     });
@@ -361,9 +382,15 @@ static void startSilentAudio(void) {
         }
         [self.overlayWindow bringSubviewToFront:self.mainPanel];
     }
-    if (self.tapMarker && self.showMarker && self.tapMarker.superview != self.overlayWindow) {
-        [self.overlayWindow addSubview:self.tapMarker];
-        [self.overlayWindow bringSubviewToFront:self.tapMarker];
+    if (!self.positionIndicators || self.positionIndicators.count != NUM_MICS) {
+        [self showPositionIndicators];
+    } else {
+        for (UIView *pv in self.positionIndicators) {
+            if (pv.superview != self.overlayWindow) {
+                [self.overlayWindow addSubview:pv];
+            }
+            [self.overlayWindow bringSubviewToFront:pv];
+        }
     }
     if (!silentPlayer || !silentPlayer.isPlaying) {
         startSilentAudio();
@@ -373,14 +400,23 @@ static void startSilentAudio(void) {
     }
 }
 
-- (void)updateMarkerPosition:(CGPoint)pos {
-    if (!self.tapMarker) return;
-    [UIView animateWithDuration:0.08 delay:0 options:UIViewAnimationOptionCurveEaseOut animations:^{
-        self.tapMarker.center = pos;
-    } completion:nil];
+- (void)selectMicAtIndex:(NSInteger)index {
+    if (index < 0 || index >= NUM_MICS) return;
+    self.selectedMicIndex = index;
+    [self updatePositionIndicatorHighlights];
+    sendAll([NSString stringWithFormat:@"MIC:%ld", (long)index]);
     self.cachedTapTarget = nil;
     self.cachedGameWindow = nil;
+    // Update panel display if needed
+    [self updateSpeedLabelDisplay];
     [self saveInstanceState];
+}
+
+- (CGPoint)selectedMicPosition {
+    CGSize sz = [UIScreen mainScreen].bounds.size;
+    CGFloat x = sz.width * micPositions[self.selectedMicIndex][0];
+    CGFloat y = sz.height * micPositions[self.selectedMicIndex][1];
+    return CGPointMake(x, y);
 }
 
 #pragma mark - Floating Button
@@ -446,93 +482,70 @@ static void startSilentAudio(void) {
     }
 }
 
-#pragma mark - Tap Marker
+#pragma mark - Position Indicators
 
-- (void)showTapMarker {
-    if (self.tapMarker) {
-        [self.tapMarker removeFromSuperview];
-        self.tapMarker = nil;
-    }
+- (void)showPositionIndicators {
     UIWindow *w = self.overlayWindow;
-    CGFloat size = 48;
-    UIView *marker = [[UIView alloc] initWithFrame:CGRectMake(w.center.x - size/2, w.center.y - size/2, size, size)];
-    marker.backgroundColor = [UIColor clearColor];
-    marker.layer.cornerRadius = size / 2;
-    marker.layer.borderWidth = 2.5;
-    marker.layer.borderColor = PRIMARY_COLOR.CGColor;
-    marker.layer.shadowColor = [UIColor blackColor].CGColor;
-    marker.layer.shadowOffset = CGSizeZero;
-    marker.layer.shadowRadius = 5;
-    marker.layer.shadowOpacity = 0.6;
-    marker.userInteractionEnabled = YES;
+    for (UIView *pv in self.positionIndicators) {
+        [pv removeFromSuperview];
+    }
+    [self.positionIndicators removeAllObjects];
+    CGSize sz = w.bounds.size;
+    CGFloat idSize = 32;
+    for (int i = 0; i < NUM_MICS; i++) {
+        CGFloat x = sz.width * micPositions[i][0] - idSize/2;
+        CGFloat y = sz.height * micPositions[i][1] - idSize/2;
+        UIView *pv = [[UIView alloc] initWithFrame:CGRectMake(x, y, idSize, idSize)];
+        pv.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.5];
+        pv.layer.cornerRadius = idSize / 2;
+        pv.layer.borderWidth = 1.5;
+        pv.layer.borderColor = [UIColor colorWithWhite:0.5 alpha:0.5].CGColor;
+        pv.userInteractionEnabled = YES;
+        pv.tag = i;
 
-    UILabel *impLabel = [[UILabel alloc] initWithFrame:marker.bounds];
-    impLabel.text = @"impossible";
-    impLabel.textColor = PRIMARY_COLOR;
-    impLabel.font = [UIFont boldSystemFontOfSize:7];
-    impLabel.textAlignment = NSTextAlignmentCenter;
-    impLabel.numberOfLines = 1;
-    impLabel.adjustsFontSizeToFitWidth = YES;
-    impLabel.minimumScaleFactor = 0.5;
-    [marker addSubview:impLabel];
+        UILabel *numLbl = [[UILabel alloc] initWithFrame:pv.bounds];
+        numLbl.text = [NSString stringWithFormat:@"%d", i + 1];
+        numLbl.textColor = [UIColor whiteColor];
+        numLbl.font = [UIFont boldSystemFontOfSize:13];
+        numLbl.textAlignment = NSTextAlignmentCenter;
+        [pv addSubview:numLbl];
 
-    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handleTapMarkerPan:)];
-    [marker addGestureRecognizer:pan];
+        UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(handlePositionIndicatorTap:)];
+        [pv addGestureRecognizer:tap];
 
-    UILongPressGestureRecognizer *lp = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(handleMarkerLongPress:)];
-    lp.minimumPressDuration = 1.0;
-    [marker addGestureRecognizer:lp];
-
-    [w addSubview:marker];
-    self.tapMarker = marker;
-    self.showMarker = YES;
-
-    marker.alpha = 0;
-    marker.transform = CGAffineTransformMakeScale(0.5, 0.5);
-    [UIView animateWithDuration:0.3 delay:0 usingSpringWithDamping:0.6 initialSpringVelocity:0.8 options:0 animations:^{
-        marker.alpha = 1;
-        marker.transform = CGAffineTransformIdentity;
-    } completion:nil];
+        [w addSubview:pv];
+        [self.positionIndicators addObject:pv];
+    }
+    [self updatePositionIndicatorHighlights];
 }
 
-- (void)handleTapMarkerPan:(UIPanGestureRecognizer *)p {
-    UIView *v = p.view;
-    CGPoint t = [p translationInView:v.superview];
-    v.center = CGPointMake(v.center.x + t.x, v.center.y + t.y);
-    [p setTranslation:CGPointZero inView:v.superview];
-    self.cachedTapTarget = nil;
-    self.cachedGameWindow = nil;
-    if (p.state == UIGestureRecognizerStateEnded) {
-        sendAll([NSString stringWithFormat:@"POS:%.0f,%.0f", v.center.x, v.center.y]);
-        [self saveInstanceState];
+- (void)updatePositionIndicatorHighlights {
+    for (int i = 0; i < (int)self.positionIndicators.count; i++) {
+        UIView *pv = self.positionIndicators[i];
+        if (i == self.selectedMicIndex) {
+            pv.backgroundColor = PRIMARY_COLOR;
+            pv.layer.borderColor = [UIColor whiteColor].CGColor;
+            pv.transform = CGAffineTransformMakeScale(1.25, 1.25);
+        } else {
+            pv.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.45];
+            pv.layer.borderColor = [UIColor colorWithWhite:0.5 alpha:0.4].CGColor;
+            pv.transform = CGAffineTransformIdentity;
+        }
     }
 }
 
-- (void)handleMarkerLongPress:(UILongPressGestureRecognizer *)g {
-    if (g.state == UIGestureRecognizerStateBegan) {
-        // Cycle through speed presets
-        static CGFloat speedPresets[] = {0.001, 0.005, 0.010, 0.025, 0.050};
-        static int presetIdx = 0;
-        presetIdx = (presetIdx + 1) % 5;
-        self.currentSpeed = speedPresets[presetIdx];
-        self.speedSlider.value = self.currentSpeed;
-        self.speedLabel.text = [NSString stringWithFormat:@"السرعة: %.3f ث", self.currentSpeed];
-        if (self.autoTapEnabled) [self restartTapWithSpeed:self.currentSpeed];
-        [self saveInstanceState];
-        // Show toast with preset level
-        int level = 5 - presetIdx;
-        [self showToast:[NSString stringWithFormat:@"سرعة %dx", level > 0 ? level : 1]];
-    }
+- (void)handlePositionIndicatorTap:(UITapGestureRecognizer *)g {
+    NSInteger index = g.view.tag;
+    [self selectMicAtIndex:index];
+    NSString *name = (index >= 0 && index < (NSInteger)accountNames.count) ? accountNames[index] : @"";
+    [self showToast:[NSString stringWithFormat:@"مايك %ld | %@", (long)(index + 1), name]];
 }
 
 #pragma mark - Persistence
 
 - (void)saveInstanceState {
     NSMutableDictionary *dict = [NSMutableDictionary dictionary];
-    if (self.tapMarker) {
-        dict[@"cx"] = @(self.tapMarker.center.x);
-        dict[@"cy"] = @(self.tapMarker.center.y);
-    }
+    dict[@"micIdx"] = @(self.selectedMicIndex);
     dict[@"tapOn"] = @(self.autoTapEnabled);
     dict[@"speed"] = @(self.currentSpeed);
     [dict writeToFile:SHARED_STATE atomically:YES];
@@ -541,13 +554,11 @@ static void startSilentAudio(void) {
 - (void)loadInstanceState {
     NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:SHARED_STATE];
     if (!dict) return;
-    if (dict[@"cx"] && dict[@"cy"] && self.tapMarker) {
-        CGFloat x = [dict[@"cx"] floatValue];
-        CGFloat y = [dict[@"cy"] floatValue];
-        if (x > 0 && y > 0) {
-            self.tapMarker.center = CGPointMake(x, y);
-            self.cachedTapTarget = nil;
-            self.cachedGameWindow = nil;
+    NSNumber *mi = dict[@"micIdx"];
+    if (mi) {
+        NSInteger idx = [mi integerValue];
+        if (idx >= 0 && idx < NUM_MICS) {
+            self.selectedMicIndex = idx;
         }
     }
     float spd = [dict[@"speed"] floatValue];
@@ -560,11 +571,6 @@ static void startSilentAudio(void) {
     } else if (!shouldTap && self.autoTapEnabled) {
         [self stopTap];
     }
-}
-
-- (CGPoint)tapMarkerPosition {
-    if (!self.tapMarker || !self.showMarker) return CGPointZero;
-    return self.tapMarker.center;
 }
 
 #pragma mark - Main Panel
@@ -607,9 +613,12 @@ static void startSilentAudio(void) {
     [closeBtn addGestureRecognizer:panH];
 
     CGFloat y = 42;
+    CGFloat mx = 12;
+    CGFloat cw = pw - 24;
 
+    // Toggle button
     self.toggleBtn = [UIButton buttonWithType:UIButtonTypeCustom];
-    self.toggleBtn.frame = CGRectMake(12, y, pw - 24, 38);
+    self.toggleBtn.frame = CGRectMake(mx, y, cw, 38);
     self.toggleBtn.backgroundColor = SUCCESS_COLOR;
     self.toggleBtn.layer.cornerRadius = 19;
     [self.toggleBtn setTitle:@"تشغيل" forState:UIControlStateNormal];
@@ -617,17 +626,18 @@ static void startSilentAudio(void) {
     self.toggleBtn.titleLabel.font = [UIFont boldSystemFontOfSize:15];
     [self.toggleBtn addTarget:self action:@selector(toggleStartStop) forControlEvents:UIControlEventTouchUpInside];
     [self.mainPanel addSubview:self.toggleBtn];
-
     y += 44;
 
-    self.speedLabel = [[UILabel alloc] initWithFrame:CGRectMake(12, y, pw - 24, 16)];
-    self.speedLabel.text = [NSString stringWithFormat:@"السرعة: %.3f ث", self.currentSpeed];
+    // Speed label
+    self.speedLabel = [[UILabel alloc] initWithFrame:CGRectMake(mx, y, cw, 16)];
     self.speedLabel.textColor = TEXT_PRIMARY;
     self.speedLabel.font = [UIFont systemFontOfSize:10];
     [self.mainPanel addSubview:self.speedLabel];
+    [self updateSpeedLabelDisplay];
     y += 18;
 
-    self.speedSlider = [[UISlider alloc] initWithFrame:CGRectMake(12, y, pw - 24, 20)];
+    // Speed slider
+    self.speedSlider = [[UISlider alloc] initWithFrame:CGRectMake(mx, y, cw, 20)];
     self.speedSlider.minimumValue = 0.001f;
     self.speedSlider.maximumValue = 0.1f;
     self.speedSlider.value = self.currentSpeed;
@@ -639,12 +649,12 @@ static void startSilentAudio(void) {
     y += 24;
 
     // Speed preset buttons
-    CGFloat btnW = (pw - 24 - 20) / 5;
+    CGFloat btnW = (cw - 20) / 5;
     CGFloat presetVals[5] = {0.001, 0.005, 0.010, 0.025, 0.050};
     NSString *presetLabels[5] = {@"1", @"5", @"10", @"25", @"50"};
     for (int i = 0; i < 5; i++) {
         UIButton *pb = [UIButton buttonWithType:UIButtonTypeCustom];
-        pb.frame = CGRectMake(12 + (btnW + 5) * i, y, btnW, 20);
+        pb.frame = CGRectMake(mx + (btnW + 5) * i, y, btnW, 20);
         pb.backgroundColor = BG_CARD;
         pb.layer.cornerRadius = 6;
         pb.titleLabel.font = [UIFont systemFontOfSize:9];
@@ -656,27 +666,77 @@ static void startSilentAudio(void) {
     }
     y += 26;
 
-    UILabel *mergeLabel = [[UILabel alloc] initWithFrame:CGRectMake(12, y, pw - 24, 16)];
+    // Mic selection: label + text field + activate button
+    UILabel *micSelectLabel = [[UILabel alloc] initWithFrame:CGRectMake(mx, y, 52, 28)];
+    micSelectLabel.text = @"المايك:";
+    micSelectLabel.textColor = TEXT_PRIMARY;
+    micSelectLabel.font = [UIFont systemFontOfSize:11];
+    micSelectLabel.textAlignment = NSTextAlignmentRight;
+    [self.mainPanel addSubview:micSelectLabel];
+
+    UITextField *micField = [[UITextField alloc] initWithFrame:CGRectMake(mx + 52, y + 3, 50, 22)];
+    micField.backgroundColor = BG_CARD;
+    micField.textColor = TEXT_PRIMARY;
+    micField.font = [UIFont systemFontOfSize:12];
+    micField.textAlignment = NSTextAlignmentCenter;
+    micField.layer.cornerRadius = 6;
+    micField.layer.borderWidth = 0.5;
+    micField.layer.borderColor = PRIMARY_COLOR.CGColor;
+    micField.keyboardType = UIKeyboardTypeNumberPad;
+    micField.text = [NSString stringWithFormat:@"%ld", (long)(self.selectedMicIndex + 1)];
+    self.micTextField = micField;
+    [self.mainPanel addSubview:micField];
+
+    UIButton *actBtn = [UIButton buttonWithType:UIButtonTypeCustom];
+    actBtn.frame = CGRectMake(mx + 108, y, cw - 108, 28);
+    actBtn.backgroundColor = PRIMARY_COLOR;
+    actBtn.layer.cornerRadius = 14;
+    [actBtn setTitle:@"تفعيل" forState:UIControlStateNormal];
+    [actBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    actBtn.titleLabel.font = [UIFont boldSystemFontOfSize:12];
+    [actBtn addTarget:self action:@selector(activateMicFromField) forControlEvents:UIControlEventTouchUpInside];
+    [self.mainPanel addSubview:actBtn];
+    y += 32;
+
+    // Number grid: 2 rows of 5
+    CGFloat gBtnW = (cw - 16) / 5;
+    for (int i = 0; i < NUM_MICS; i++) {
+        int col = i % 5;
+        int row = i / 5;
+        UIButton *nb = [UIButton buttonWithType:UIButtonTypeCustom];
+        nb.frame = CGRectMake(mx + (gBtnW + 4) * col, y + (24 + 4) * row, gBtnW, 24);
+        nb.backgroundColor = (i == self.selectedMicIndex) ? PRIMARY_COLOR : BG_CARD;
+        nb.layer.cornerRadius = 6;
+        nb.titleLabel.font = [UIFont boldSystemFontOfSize:11];
+        [nb setTitle:[NSString stringWithFormat:@"%d", i + 1] forState:UIControlStateNormal];
+        [nb setTitleColor:(i == self.selectedMicIndex) ? [UIColor whiteColor] : PRIMARY_COLOR forState:UIControlStateNormal];
+        nb.tag = i + 100;
+        [nb addTarget:self action:@selector(micNumberTapped:) forControlEvents:UIControlEventTouchUpInside];
+        [self.mainPanel addSubview:nb];
+    }
+    y += 56;
+
+    // Merge label
+    UILabel *mergeLabel = [[UILabel alloc] initWithFrame:CGRectMake(mx, y, cw, 14)];
     mergeLabel.text = @"تم ربط الحسابات تلقائياً";
     mergeLabel.textColor = [UIColor greenColor];
-    mergeLabel.font = [UIFont systemFontOfSize:10];
+    mergeLabel.font = [UIFont systemFontOfSize:9];
     mergeLabel.textAlignment = NSTextAlignmentCenter;
     [self.mainPanel addSubview:mergeLabel];
     y += 18;
 
-    UIView *creditBox = [[UIView alloc] initWithFrame:CGRectMake(12, y, pw - 24, 28)];
+    // Credit
+    UIView *creditBox = [[UIView alloc] initWithFrame:CGRectMake(mx, y, cw, 24)];
     creditBox.backgroundColor = BG_CARD;
-    creditBox.layer.cornerRadius = 14;
+    creditBox.layer.cornerRadius = 12;
     [self.mainPanel addSubview:creditBox];
-
-    UILabel *creditLbl = [[UILabel alloc] initWithFrame:CGRectMake(8, 0, pw - 40, 28)];
+    UILabel *creditLbl = [[UILabel alloc] initWithFrame:CGRectMake(8, 0, cw - 16, 24)];
     creditLbl.text = @"حقوق عبدالإله فقط.";
     creditLbl.textColor = [PRIMARY_COLOR colorWithAlphaComponent:0.7];
-    creditLbl.font = [UIFont boldSystemFontOfSize:9];
+    creditLbl.font = [UIFont boldSystemFontOfSize:8];
     creditLbl.textAlignment = NSTextAlignmentCenter;
     [creditBox addSubview:creditLbl];
-
-    y += 34;
+    y += 30;
 
     CGRect f = self.mainPanel.frame;
     f.size.height = y + 8;
@@ -692,7 +752,7 @@ static void startSilentAudio(void) {
     CGFloat val = sender.value;
     if (val < 0.001f) val = 0.001f;
     self.currentSpeed = val;
-    self.speedLabel.text = [NSString stringWithFormat:@"السرعة: %.3f ث", self.currentSpeed];
+    [self updateSpeedLabelDisplay];
     if (self.autoTapEnabled) [self restartTapWithSpeed:self.currentSpeed];
     [self saveInstanceState];
 }
@@ -703,7 +763,7 @@ static void startSilentAudio(void) {
     if (idx < 0 || idx > 4) return;
     self.currentSpeed = presetVals[idx];
     self.speedSlider.value = self.currentSpeed;
-    self.speedLabel.text = [NSString stringWithFormat:@"السرعة: %.3f ث", self.currentSpeed];
+    [self updateSpeedLabelDisplay];
     if (self.autoTapEnabled) [self restartTapWithSpeed:self.currentSpeed];
     [self saveInstanceState];
 }
@@ -757,7 +817,13 @@ static void startSilentAudio(void) {
 - (void)startTapWithSpeed:(float)speed {
     if (speed < 0.001f) speed = 0.001f;
     [self stopTapTimer];
+    [self stopFastTapLink];
     self.tapGeneration++;
+    // Use CADisplayLink for speeds >= 8ms (matches display refresh well)
+    if (speed >= 0.008f) {
+        [self startFastTapLinkWithSpeed:speed];
+        return;
+    }
     __weak typeof(self) weakSelf = self;
     NSUInteger myGen = self.tapGeneration;
     dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
@@ -779,12 +845,96 @@ static void startSilentAudio(void) {
         dispatch_source_cancel(self.tapTimer);
         self.tapTimer = NULL;
     }
+    [self stopFastTapLink];
+}
+
+#pragma mark - CADisplayLink Fast Engine
+
+- (void)startFastTapLinkWithSpeed:(float)speed {
+    [self stopFastTapLink];
+    self.fastTapAccumulator = 0;
+    CADisplayLink *link = [CADisplayLink displayLinkWithTarget:self selector:@selector(fastTapLinkCallback:)];
+    if (@available(iOS 10.3, *)) {
+        link.preferredFramesPerSecond = 120;
+    }
+    [link addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
+    self.fastTapLink = link;
+}
+
+- (void)stopFastTapLink {
+    if (self.fastTapLink) {
+        [self.fastTapLink invalidate];
+        self.fastTapLink = nil;
+    }
+    self.fastTapAccumulator = 0;
+}
+
+- (void)fastTapLinkCallback:(CADisplayLink *)link {
+    if (!self.autoTapEnabled) { [self stopFastTapLink]; return; }
+    self.fastTapAccumulator += link.duration;
+    while (self.fastTapAccumulator >= self.currentSpeed) {
+        self.fastTapAccumulator -= self.currentSpeed;
+        [self tapRealTarget];
+        if (!self.autoTapEnabled) break;
+    }
+}
+
+#pragma mark - Speed Text Helper
+
+- (NSString *)speedTextForValue:(float)speed {
+    if (speed <= 0.005) return @"سريع جداً";
+    if (speed <= 0.015) return @"سريع";
+    if (speed <= 0.040) return @"عادي";
+    return @"بطيء";
+}
+
+- (void)updateSpeedLabelDisplay {
+    NSString *quality = [self speedTextForValue:self.currentSpeed];
+    self.speedLabel.text = [NSString stringWithFormat:@"السرعة: %.0f مللي | %@", self.currentSpeed * 1000, quality];
+    // Update mic text field
+    if (self.micTextField) {
+        self.micTextField.text = [NSString stringWithFormat:@"%ld", (long)(self.selectedMicIndex + 1)];
+    }
+    // Update number grid buttons in panel (tags 100-109)
+    if (self.mainPanel) {
+        for (UIView *sub in self.mainPanel.subviews) {
+            if ([sub isKindOfClass:[UIButton class]] && sub.tag >= 100) {
+                UIButton *btn = (UIButton *)sub;
+                NSInteger idx = btn.tag - 100;
+                if (idx >= 0 && idx < NUM_MICS) {
+                    BOOL active = (idx == self.selectedMicIndex);
+                    btn.backgroundColor = active ? PRIMARY_COLOR : BG_CARD;
+                    [btn setTitleColor:active ? [UIColor whiteColor] : PRIMARY_COLOR forState:UIControlStateNormal];
+                }
+            }
+        }
+    }
+}
+
+- (void)activateMicFromField {
+    NSString *text = self.micTextField.text;
+    NSInteger num = [text integerValue];
+    if (num < 1) num = 1;
+    if (num > NUM_MICS) num = NUM_MICS;
+    [self selectMicAtIndex:num - 1];
+    [self.micTextField resignFirstResponder];
+    NSString *name = (num - 1 < (NSInteger)accountNames.count) ? accountNames[num - 1] : @"";
+    [self showToast:[NSString stringWithFormat:@"مايك %ld | %@", (long)num, name]];
+}
+
+- (void)micNumberTapped:(UIButton *)sender {
+    NSInteger idx = sender.tag - 100;
+    if (idx >= 0 && idx < NUM_MICS) {
+        NSString *name = (idx < (NSInteger)accountNames.count) ? accountNames[idx] : @"";
+        [self showToast:[NSString stringWithFormat:@"مايك %ld | %@", (long)(idx + 1), name]];
+    }
 }
 
 - (void)stopTap {
     @try {
         self.autoTapEnabled = NO;
         [self stopTapTimer];
+        [self stopFastTapLink];
         [self saveInstanceState];
         if (self.toggleBtn) {
             [self.toggleBtn setTitle:@"تشغيل" forState:UIControlStateNormal];
@@ -798,7 +948,7 @@ static void startSilentAudio(void) {
 - (void)tapRealTarget {
     @try {
         if (!self.autoTapEnabled) return;
-        CGPoint tapPt = [self tapMarkerPosition];
+        CGPoint tapPt = [self selectedMicPosition];
         if (tapPt.x <= 0 && tapPt.y <= 0) return;
 
         // Random jitter +/- 4px to avoid anti-cheat detection
@@ -841,14 +991,15 @@ static void startSilentAudio(void) {
 }
 
 - (void)performRealTapOnView:(UIView *)targetView atPoint:(CGPoint)pt {
-    // Visual tap flash
-    if (self.tapMarker) {
-        self.tapMarker.transform = CGAffineTransformMakeScale(0.85, 0.85);
-        self.tapMarker.alpha = 0.7;
+    // Visual tap flash on selected position indicator
+    if (self.selectedMicIndex >= 0 && self.selectedMicIndex < (NSInteger)self.positionIndicators.count) {
+        UIView *pv = self.positionIndicators[self.selectedMicIndex];
+        pv.transform = CGAffineTransformMakeScale(0.7, 0.7);
+        pv.alpha = 0.6;
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.03 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             [UIView animateWithDuration:0.05 animations:^{
-                self.tapMarker.transform = CGAffineTransformIdentity;
-                self.tapMarker.alpha = 1.0;
+                pv.transform = CGAffineTransformMakeScale(1.25, 1.25);
+                pv.alpha = 1.0;
             }];
         });
     }
@@ -1039,12 +1190,9 @@ static void udpInit(void) {
                 NSString *m = [NSString stringWithUTF8String:buf];
                 dispatch_async(dispatch_get_main_queue(), ^{
                     AbdulilahManager *mgr = [AbdulilahManager shared];
-                    if ([m hasPrefix:@"POS:"]) {
-                        NSArray *p = [[m substringFromIndex:4] componentsSeparatedByString:@","];
-                        if (p.count == 2) {
-                            CGPoint np = CGPointMake([p[0] floatValue], [p[1] floatValue]);
-                            [mgr updateMarkerPosition:np];
-                        }
+                    if ([m hasPrefix:@"MIC:"]) {
+                        NSInteger idx = [[m substringFromIndex:4] integerValue];
+                        [mgr selectMicAtIndex:idx];
                     } else if ([m isEqualToString:@"RUN"]) {
                         [mgr startTap];
                     } else if ([m isEqualToString:@"STOP"]) {
@@ -1214,8 +1362,9 @@ static void ym_signalHandler(int sig) {
         [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidReceiveMemoryWarningNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
             AbdulilahManager *m = [AbdulilahManager shared];
             if (m.mainPanel) { [m.mainPanel removeFromSuperview]; m.mainPanel = nil; }
-            if (m.tapMarker) { [m.tapMarker removeFromSuperview]; m.tapMarker = nil; }
-            [m showTapMarker];
+            if (!m.positionIndicators || m.positionIndicators.count == 0) {
+                [m showPositionIndicators];
+            }
         }];
         [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidBecomeActiveNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
             if (bgTask != UIBackgroundTaskInvalid) {
