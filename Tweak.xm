@@ -650,7 +650,6 @@ static void startSilentAudio(void) {
 
     // Speed preset buttons
     CGFloat btnW = (cw - 20) / 5;
-    CGFloat presetVals[5] = {0.001, 0.005, 0.010, 0.025, 0.050};
     NSString *presetLabels[5] = {@"1", @"5", @"10", @"25", @"50"};
     for (int i = 0; i < 5; i++) {
         UIButton *pb = [UIButton buttonWithType:UIButtonTypeCustom];
@@ -1030,9 +1029,9 @@ static void gs_init(void) {
     dispatch_once(&gs_once, ^{
         void *h = dlopen("/System/Library/PrivateFrameworks/GraphicsServices.framework/GraphicsServices", RTLD_LAZY);
         if (h) {
-            gs_CreateWithType = dlsym(h, "GSEventCreateWithType");
-            gs_SetLocationInWindow = dlsym(h, "GSEventSetLocationInWindow");
-            gs_PostEvent = dlsym(h, "GSEventPostEvent");
+            *(void **)&gs_CreateWithType = dlsym(h, "GSEventCreateWithType");
+            *(void **)&gs_SetLocationInWindow = dlsym(h, "GSEventSetLocationInWindow");
+            *(void **)&gs_PostEvent = dlsym(h, "GSEventPostEvent");
         }
     });
 }
@@ -1080,11 +1079,11 @@ static void hid_init(void) {
         void *h = dlopen("/System/Library/Frameworks/IOKit.framework/IOKit", RTLD_LAZY);
         if (!h) h = dlopen("/System/Library/PrivateFrameworks/IOMobileFramebuffer.framework/IOMobileFramebuffer", RTLD_LAZY);
         if (h) {
-            hid_CreateDigitizerEvent = dlsym(h, "IOHIDEventCreateDigitizerEvent");
-            hid_CreateFingerEvent = dlsym(h, "IOHIDEventCreateDigitizerFingerEventWithQuality");
-            hid_AppendEvent = dlsym(h, "IOHIDEventAppendEvent");
-            hid_SetIntegerValue = dlsym(h, "IOHIDEventSetIntegerValue");
-            hid_PostEvent = dlsym(h, "IOHIDEventPostEvent");
+            *(void **)&hid_CreateDigitizerEvent = dlsym(h, "IOHIDEventCreateDigitizerEvent");
+            *(void **)&hid_CreateFingerEvent = dlsym(h, "IOHIDEventCreateDigitizerFingerEventWithQuality");
+            *(void **)&hid_AppendEvent = dlsym(h, "IOHIDEventAppendEvent");
+            *(void **)&hid_SetIntegerValue = dlsym(h, "IOHIDEventSetIntegerValue");
+            *(void **)&hid_PostEvent = dlsym(h, "IOHIDEventPostEvent");
         }
     });
 }
