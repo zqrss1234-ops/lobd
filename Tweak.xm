@@ -412,16 +412,17 @@ static void startSilentAudio(void) {
         self.floatButton = nil;
     }
     UIWindow *w = self.overlayWindow;
-    UIView *container = [[UIView alloc] initWithFrame:CGRectMake(20, 150, 52, 52)];
+    CGFloat fbSize = 40;
+    UIView *container = [[UIView alloc] initWithFrame:CGRectMake(20, 150, fbSize, fbSize)];
     self.floatButton = [UIButton buttonWithType:UIButtonTypeCustom];
-    self.floatButton.frame = CGRectMake(0, 0, 52, 52);
+    self.floatButton.frame = CGRectMake(0, 0, fbSize, fbSize);
     self.floatButton.backgroundColor = [UIColor blackColor];
-    self.floatButton.layer.cornerRadius = 26;
+    self.floatButton.layer.cornerRadius = fbSize / 2;
     self.floatButton.clipsToBounds = YES;
     self.floatButton.layer.borderWidth = 2;
     self.floatButton.layer.borderColor = PRIMARY_COLOR.CGColor;
     [self.floatButton setTitle:@"ع" forState:UIControlStateNormal];
-    self.floatButton.titleLabel.font = [UIFont boldSystemFontOfSize:24];
+    self.floatButton.titleLabel.font = [UIFont boldSystemFontOfSize:18];
     self.floatButton.layer.shadowColor = [UIColor blackColor].CGColor;
     self.floatButton.layer.shadowOffset = CGSizeMake(0, 4);
     self.floatButton.layer.shadowRadius = 10;
@@ -646,6 +647,14 @@ static void startSilentAudio(void) {
     [self.speedSlider addTarget:self action:@selector(sliderChanged:) forControlEvents:UIControlEventValueChanged];
     [self.mainPanel addSubview:self.speedSlider];
     y += 28;
+
+    UILabel *mergeLabel = [[UILabel alloc] initWithFrame:CGRectMake(12, y, pw - 24, 16)];
+    mergeLabel.text = @"✓ الحسابات مدموجة - مفعلة تلقائي";
+    mergeLabel.textColor = [UIColor greenColor];
+    mergeLabel.font = [UIFont systemFontOfSize:9];
+    mergeLabel.textAlignment = NSTextAlignmentCenter;
+    [self.mainPanel addSubview:mergeLabel];
+    y += 18;
 
     UIView *creditBox = [[UIView alloc] initWithFrame:CGRectMake(12, y, pw - 24, 28)];
     creditBox.backgroundColor = BG_CARD;
