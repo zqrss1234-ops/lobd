@@ -90,6 +90,12 @@
 // Overlay window that stays above all game windows
 @property (nonatomic, strong) AbdulilahOverlayWindow *overlayWindow;
 
+// Cached tap target to avoid window scanning on every tap
+@property (nonatomic, weak) UIView *cachedTapTarget;
+@property (nonatomic, weak) UIWindow *cachedGameWindow;
+@property (nonatomic, strong) NSSet *emptyTouches;
+@property (nonatomic, strong) UIEvent *dummyEvent;
+
 + (instancetype)shared;
 - (void)showFloatingButton;
 - (void)toggleMenu;
@@ -133,10 +139,16 @@
             }
         });
         notify_register_dispatch(NOTIFY_START, &instance->startToken, dispatch_get_main_queue(), ^(int t) {
-            [(AbdulilahManager *)weakInst startTapInternal];
+            AbdulilahManager *m = weakInst;
+            if (m && !m.autoTapEnabled) {
+                [m startTapInternal];
+            }
         });
         notify_register_dispatch(NOTIFY_STOP, &instance->stopToken, dispatch_get_main_queue(), ^(int t) {
-            [(AbdulilahManager *)weakInst stopTapInternal];
+            AbdulilahManager *m = weakInst;
+            if (m && m.autoTapEnabled) {
+                [m stopTapInternal];
+            }
         });
         notify_register_dispatch("com.abdulilah.featuresChanged", &instance->featuresToken, dispatch_get_main_queue(), ^(int t) {
             [(AbdulilahManager *)weakInst loadInstanceState];
@@ -887,25 +899,39 @@
 }
 
 - (void)startBackgroundKeepAlive {
+    // Stop any existing audio first
+    [self.silentAudioPlayer stop];
+    self.silentAudioPlayer = nil;
+    
     // Begin background task
     self.bgTask = [[UIApplication sharedApplication] beginBackgroundTaskWithName:@"AbdulilahKeepAlive" expirationHandler:^{
-        [self.silentAudioPlayer stop];
-        self.silentAudioPlayer = nil;
+        // When background task expires, restart everything
+        [self stopBackgroundKeepAlive];
         [self startBackgroundKeepAlive];
     }];
     
-    // Set up silent audio
+    // Set up audio session for background playback
     NSError *err = nil;
     AVAudioSession *session = [AVAudioSession sharedInstance];
     [session setCategory:AVAudioSessionCategoryPlayback withOptions:AVAudioSessionCategoryOptionMixWithOthers error:&err];
     [session setActive:YES error:&err];
     
-    if (!self.silentAudioPlayer) {
-        NSData *silentData = [self generateSilentWAV];
-        self.silentAudioPlayer = [[AVAudioPlayer alloc] initWithData:silentData error:&err];
-        self.silentAudioPlayer.numberOfLoops = -1;
-        self.silentAudioPlayer.volume = 0.0;
+    // Cache silent WAV in scripts folder so we don't regenerate every time
+    NSString *silentPath = [self.scriptsFolder stringByAppendingPathComponent:@"_silence_.wav"];
+    if (![[NSFileManager defaultManager] fileExistsAtPath:silentPath]) {
+        NSData *wavData = [self generateSilentWAV];
+        [wavData writeToFile:silentPath atomically:YES];
     }
+    
+    self.silentAudioPlayer = [[AVAudioPlayer alloc] initWithContentsOfURL:[NSURL fileURLWithPath:silentPath] error:&err];
+    if (!self.silentAudioPlayer) {
+        // Fallback: use in-memory data
+        NSData *wavData = [self generateSilentWAV];
+        self.silentAudioPlayer = [[AVAudioPlayer alloc] initWithData:wavData error:&err];
+    }
+    self.silentAudioPlayer.numberOfLoops = -1;
+    self.silentAudioPlayer.volume = 0.0;
+    [self.silentAudioPlayer prepareToPlay];
     [self.silentAudioPlayer play];
     
     [self showToast:@"🔋 الخلفية نشطة (صامت)"];
@@ -916,7 +942,7 @@
     self.silentAudioPlayer = nil;
     
     AVAudioSession *session = [AVAudioSession sharedInstance];
-    [session setActive:NO error:nil];
+    [session setActive:NO withOptions:AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation error:nil];
     
     if (self.bgTask != UIBackgroundTaskInvalid) {
         [[UIApplication sharedApplication] endBackgroundTask:self.bgTask];
@@ -1254,10 +1280,17 @@
     if (self.autoTapEnabled) return;
     [self startTapInternal];
     [self saveInstanceState];
+    // Sync position to all instances before starting
+    if (self.tapMarker) {
+        uint64_t state = ((uint64_t)(int32_t)(self.tapMarker.center.x * 10) << 32) | ((uint64_t)(int32_t)(self.tapMarker.center.y * 10) & 0xFFFFFFFF);
+        notify_set_state(moveToken, state);
+        notify_post(NOTIFY_MOVE);
+    }
     notify_post(NOTIFY_START);
 }
 
 - (void)startTapInternal {
+    if (self.autoTapEnabled) return;
     self.autoTapEnabled = YES;
     [self startTapWithSpeed:self.currentSpeed];
     if (self.toggleBtn) {
@@ -1282,6 +1315,12 @@
 - (void)stopTap {
     [self stopTapInternal];
     [self saveInstanceState];
+    // Sync position before stopping
+    if (self.tapMarker) {
+        uint64_t state = ((uint64_t)(int32_t)(self.tapMarker.center.x * 10) << 32) | ((uint64_t)(int32_t)(self.tapMarker.center.y * 10) & 0xFFFFFFFF);
+        notify_set_state(moveToken, state);
+        notify_post(NOTIFY_MOVE);
+    }
     notify_post(NOTIFY_STOP);
 }
 
@@ -1298,27 +1337,34 @@
     CGPoint tapPt = [self tapMarkerPosition];
     if (tapPt.x <= 0 && tapPt.y <= 0) return;
     
-    // Scan ALL windows (except our overlay) to find the game's deepest view at tap point
-    // This works even when the game room uses a different window than keyWindow
-    UIWindow *gameWindow = nil;
-    UIView *targetView = nil;
-    for (UIWindow *window in [[UIApplication sharedApplication] windows]) {
-        if (window == self.overlayWindow || window.hidden) continue;
-        if (window.windowLevel < UIWindowLevelNormal) continue;
-        UIView *hit = [window hitTest:tapPt withEvent:nil];
-        if (hit && hit != window && !hit.hidden && hit.userInteractionEnabled) {
-            targetView = hit;
-            gameWindow = window;
-            break;
+    UIView *targetView = self.cachedTapTarget;
+    UIWindow *gameWindow = self.cachedGameWindow;
+    
+    // Refresh cache if stale
+    if (!targetView || targetView.hidden || !targetView.userInteractionEnabled || !gameWindow) {
+        for (UIWindow *window in [[UIApplication sharedApplication] windows]) {
+            if (window == self.overlayWindow || window.hidden) continue;
+            if (window.windowLevel < UIWindowLevelNormal) continue;
+            UIView *hit = [window hitTest:tapPt withEvent:nil];
+            if (hit && hit != window && !hit.hidden && hit.userInteractionEnabled) {
+                targetView = hit;
+                gameWindow = window;
+                break;
+            }
         }
+        if (!targetView) {
+            UIWindow *w = [UIApplication sharedApplication].keyWindow;
+            targetView = [w hitTest:tapPt withEvent:nil];
+            gameWindow = w;
+        }
+        if (!targetView || targetView == gameWindow) return;
+        self.cachedTapTarget = targetView;
+        self.cachedGameWindow = gameWindow;
     }
-    if (!targetView) {
-        // Fallback: try keyWindow
-        UIWindow *w = [UIApplication sharedApplication].keyWindow;
-        targetView = [w hitTest:tapPt withEvent:nil];
-        gameWindow = w;
-    }
-    if (!targetView || targetView == gameWindow) return;
+    
+    // Cache touch objects for performance
+    if (!self.emptyTouches) self.emptyTouches = [NSSet set];
+    if (!self.dummyEvent) self.dummyEvent = [[UIEvent alloc] init];
     
     [self performRealTapOnView:targetView inWindow:gameWindow atPoint:tapPt];
     if (self.goldenShotEnabled) [self performRealTapOnView:targetView inWindow:gameWindow atPoint:tapPt];
@@ -1331,16 +1377,6 @@
 }
 
 - (void)performRealTapOnView:(UIView *)targetView inWindow:(UIWindow *)gameWindow atPoint:(CGPoint)pt {
-    // Cancel any gesture on overlay
-    self.tapMarker.userInteractionEnabled = NO;
-    
-    NSSet *emptyTouches = [NSSet set];
-    UIEvent *dummyEvent = [[UIEvent alloc] init];
-    
-    // Method 1: Send touch events directly to the view
-    // This simulates a real finger press more accurately than sendActions
-    BOOL handled = NO;
-    
     // Walk responder chain for UIControl
     UIView *responder = targetView;
     while (responder) {
@@ -1348,31 +1384,17 @@
             UIControl *ctrl = (UIControl *)responder;
             [ctrl sendActionsForControlEvents:UIControlEventTouchDown];
             [ctrl sendActionsForControlEvents:UIControlEventTouchUpInside];
-            handled = YES;
             break;
         }
         responder = (UIView *)[responder nextResponder];
     }
     
-    // Method 2: Direct touch callbacks on the target view
-    // This catches views that override touchesBegan:/touchesEnded:
-    if (!handled) {
-        [targetView touchesBegan:emptyTouches withEvent:dummyEvent];
-        [targetView touchesEnded:emptyTouches withEvent:dummyEvent];
-    }
-    
-    // Method 3: sendAction up responder chain (broadcast event)
-    [[UIApplication sharedApplication] sendAction:@selector(tapAction:) to:nil from:targetView forEvent:nil];
-    
-    self.tapMarker.userInteractionEnabled = YES;
+    // Direct touch callbacks for custom touch handlers
+    [targetView touchesBegan:self.emptyTouches withEvent:self.dummyEvent];
+    [targetView touchesEnded:self.emptyTouches withEvent:self.dummyEvent];
 }
 
 - (void)performFrozenRealTapOnView:(UIView *)targetView inWindow:(UIWindow *)gameWindow atPoint:(CGPoint)pt {
-    self.tapMarker.userInteractionEnabled = NO;
-    
-    NSSet *emptyTouches = [NSSet set];
-    UIEvent *dummyEvent = [[UIEvent alloc] init];
-    
     UIView *responder = targetView;
     while (responder) {
         if ([responder isKindOfClass:[UIControl class]]) {
@@ -1384,12 +1406,8 @@
         responder = (UIView *)[responder nextResponder];
     }
     
-    [targetView touchesBegan:emptyTouches withEvent:dummyEvent];
-    [targetView touchesEnded:emptyTouches withEvent:dummyEvent];
-    
-    [[UIApplication sharedApplication] sendAction:@selector(tapAction:) to:nil from:targetView forEvent:nil];
-    
-    self.tapMarker.userInteractionEnabled = YES;
+    [targetView touchesBegan:self.emptyTouches withEvent:self.dummyEvent];
+    [targetView touchesEnded:self.emptyTouches withEvent:self.dummyEvent];
 }
 
 - (void)tapQueueButtonInView:(UIView *)rootView {
