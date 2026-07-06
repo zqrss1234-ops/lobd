@@ -3,6 +3,16 @@
 #import <objc/runtime.h>
 #import <AudioToolbox/AudioToolbox.h>
 #import <AVFoundation/AVFoundation.h>
+#import <sys/socket.h>
+#import <sys/select.h>
+#import <netinet/in.h>
+#import <arpa/inet.h>
+#import <substrate.h>
+#import <signal.h>
+#import <dlfcn.h>
+#import <pthread.h>
+#import <sys/stat.h>
+#import <errno.h>
 
 #define SHARED_STATE @"/tmp/com.abdulilah.state.plist"
 
@@ -14,117 +24,280 @@
 #define TEXT_PRIMARY     [UIColor whiteColor]
 #define TEXT_SECONDARY   [UIColor colorWithRed:0.60 green:0.60 blue:0.70 alpha:1.0]
 
-#pragma mark - YLT Account Model
+#define RGBA(r,g,b,a)    [UIColor colorWithRed:r/255.0 green:g/255.0 blue:b/255.0 alpha:a]
 
-@interface YLTAccount : NSObject
-@property (nonatomic, strong) NSString *bundleID;
-@property (nonatomic, assign) BOOL active;
-- (instancetype)initWithBundle:(NSString *)bundle;
-- (void)connect;
-- (void)performAction:(NSString *)action;
-@end
+static NSArray<NSString *> *accountNames = @[
+    @"عبدالإله", @"شارو", @"لحلوح", @"سعيد",
+    @"ابومتعب", @"كنق الشرق", @"حاتم",
+    @"الكايد", @"الشمامره", @"الهباس"
+];
 
-@implementation YLTAccount
+#pragma mark - UDP IPC
 
-- (instancetype)initWithBundle:(NSString *)bundle {
-    self = [super init];
-    if (self) {
-        self.bundleID = bundle;
-        self.active = NO;
+static int udpSock = -1;
+static int myPort = 0;
+#define UDP_MIN 51551
+#define UDP_MAX 51560
+
+static void udpInit(void);
+static void udpSend(NSString *msg);
+static void sendAll(NSString *msg);
+
+#pragma mark - Anti-Termination Hooks
+
+static void (*orig_exit)(int);
+static void ylt_hook_exit(int code) {}
+
+static void (*orig_abort)(void);
+static void ylt_hook_abort(void) {}
+
+static void (*orig__exit)(int);
+static void ylt_hook__exit(int code) {}
+
+static int (*orig_pthread_cancel)(pthread_t);
+static int ylt_hook_pthread_cancel(pthread_t t) { return -1; }
+
+static int (*orig_kill)(pid_t, int);
+static int ylt_hook_kill(pid_t pid, int sig) {
+    if (sig == SIGKILL && pid == getpid()) return 0;
+    return orig_kill(pid, sig);
+}
+
+static int (*orig_raise)(int);
+static int ylt_hook_raise(int sig) {
+    if (sig == SIGKILL) return 0;
+    return orig_raise(sig);
+}
+
+static void (*orig_objc_exception_throw)(id);
+static void ylt_hook_objc_exception_throw(id exc) {}
+
+static void (*orig_cxa_throw)(void *, void *, void (*)(void *));
+static void ylt_hook_cxa_throw(void *thrown, void *type, void (*dest)(void *)) {}
+
+static void (*orig_cxa_rethrow)(void);
+static void ylt_hook_cxa_rethrow(void) {}
+
+static int (*orig_access)(const char *, int);
+static int ylt_hook_access(const char *path, int mode) {
+    if (path && strstr(path, "YLTool")) return -1;
+    return orig_access(path, mode);
+}
+
+static int (*orig_stat)(const char *, struct stat *);
+static int ylt_hook_stat(const char *path, struct stat *buf) {
+    if (path && strstr(path, "YLTool")) { errno = ENOENT; return -1; }
+    return orig_stat(path, buf);
+}
+
+static int (*orig_lstat)(const char *, struct stat *);
+static int ylt_hook_lstat(const char *path, struct stat *buf) {
+    if (path && strstr(path, "YLTool")) { errno = ENOENT; return -1; }
+    return orig_lstat(path, buf);
+}
+
+static void *(*orig_dlopen)(const char *, int);
+static void *ylt_hook_dlopen(const char *path, int mode) {
+    if (path && strstr(path, "YLTool")) return NULL;
+    if (path && strstr(path, "Substrate")) return NULL;
+    if (path && strstr(path, "substrate")) return NULL;
+    return orig_dlopen(path, mode);
+}
+
+static void *(*orig_dlsym)(void *, const char *);
+static void *ylt_hook_dlsym(void *handle, const char *symbol) {
+    if (symbol && (strstr(symbol, "MSHook") || strstr(symbol, "Substrate") || strstr(symbol, "substrate") || strstr(symbol, "YLTool")))
+        return NULL;
+    return orig_dlsym(handle, symbol);
+}
+
+static int (*orig_dladdr)(const void *, Dl_info *);
+static int ylt_hook_dladdr(const void *addr, Dl_info *info) {
+    int ret = orig_dladdr(addr, info);
+    if (ret && info && info->dli_fname && strstr(info->dli_fname, "YLTool"))
+        return 0;
+    return ret;
+}
+
+static FILE *(*orig_fopen)(const char *, const char *);
+static FILE *ylt_hook_fopen(const char *path, const char *mode) {
+    if (path && strstr(path, "YLTool")) { errno = ENOENT; return NULL; }
+    return orig_fopen(path, mode);
+}
+
+#pragma mark - NSFileManager Anti-Detection
+
+#pragma mark - Alert Blocker (Kick/Ban) — handled via Logos hooks below
+
+#pragma mark - Background Task
+
+static UIBackgroundTaskIdentifier bgTask = UIBackgroundTaskInvalid;
+
+static void startBgTask(void) {
+    if (bgTask != UIBackgroundTaskInvalid) return;
+    __block UIBackgroundTaskIdentifier task = [[UIApplication sharedApplication] beginBackgroundTaskWithName:@"AbdulilahBg" expirationHandler:^{
+        [[UIApplication sharedApplication] endBackgroundTask:task];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (bgTask == task) bgTask = UIBackgroundTaskInvalid;
+            startBgTask();
+        });
+    }];
+    if (task != UIBackgroundTaskInvalid) {
+        bgTask = task;
+    } else {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            startBgTask();
+        });
     }
-    return self;
 }
 
-- (void)connect {
-    NSLog(@"[عبدالإله] Connected: %@", self.bundleID);
-    self.active = YES;
+static void startBgTaskRenewal(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        dispatch_source_t t = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
+        dispatch_source_set_timer(t, dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC), 10 * NSEC_PER_SEC, 2 * NSEC_PER_SEC);
+        dispatch_source_set_event_handler(t, ^{
+            if (bgTask != UIBackgroundTaskInvalid) {
+                [[UIApplication sharedApplication] endBackgroundTask:bgTask];
+                bgTask = UIBackgroundTaskInvalid;
+            }
+            startBgTask();
+        });
+        dispatch_resume(t);
+    });
 }
 
-- (void)performAction:(NSString *)action {
-    NSLog(@"[عبدالإله] %@ -> %@", action, self.bundleID);
+static BOOL ylt_hook_isBacEnabled(id self, SEL _cmd) { return NO; }
+static NSInteger ylt_hook_appState(id self, SEL _cmd) { return 0; }
+static void ylt_hook_terminate(id self, SEL _cmd) {}
+
+static void ylt_installBgHook(void) {
+    Class app = objc_getClass("UIApplication");
+    Method m;
+    m = class_getInstanceMethod(app, sel_registerName("_isBackgroundTaskExpirationEnabled"));
+    if (m) method_setImplementation(m, (IMP)ylt_hook_isBacEnabled);
+    m = class_getInstanceMethod(app, sel_registerName("applicationState"));
+    if (m) method_setImplementation(m, (IMP)ylt_hook_appState);
+    m = class_getInstanceMethod(app, sel_registerName("terminateWithSuccess"));
+    if (m) method_setImplementation(m, (IMP)ylt_hook_terminate);
+    m = class_getInstanceMethod(app, sel_registerName("terminate"));
+    if (m) method_setImplementation(m, (IMP)ylt_hook_terminate);
+    m = class_getInstanceMethod(app, sel_registerName("_isBackgrounded"));
+    if (m) method_setImplementation(m, (IMP)ylt_hook_isBacEnabled);
+    m = class_getInstanceMethod(app, sel_registerName("isBackground"));
+    if (m) method_setImplementation(m, (IMP)ylt_hook_isBacEnabled);
+    m = class_getInstanceMethod(app, sel_registerName("_suspend"));
+    if (m) method_setImplementation(m, (IMP)ylt_hook_terminate);
+    m = class_getInstanceMethod(app, sel_registerName("suspend"));
+    if (m) method_setImplementation(m, (IMP)ylt_hook_terminate);
 }
 
-@end
-
-#pragma mark - YLT Merge System
-
-static NSMutableArray<YLTAccount *> *YLTAccounts;
-static BOOL YLTMerged = YES;
-
-static void YLTLoadAccounts(void) {
-    YLTAccounts = [NSMutableArray new];
-    NSArray *bundles = @[
-        @"com.yalla.yallalite",
-        @"com.yalla.yallalite11",
-        @"com.yalla.yallalite22",
-        @"com.yalla.yallalite33",
-        @"com.yalla.yallalite44",
-        @"com.yalla.yallalite55",
-        @"com.yalla.yallalite66",
-        @"com.yalla.yallalite77",
-        @"com.yalla.yallalite88"
-    ];
-    for (NSString *bundle in bundles) {
-        [YLTAccounts addObject:[[YLTAccount alloc] initWithBundle:bundle]];
-    }
-}
-
-static void YLTAttach(void) {
-    for (YLTAccount *acc in YLTAccounts) {
-        [acc connect];
-    }
-}
-
-#pragma mark - Broadcast & Sync
+#pragma mark - Forward Declarations
 
 @class AbdulilahManager;
-extern void YLT_Do(NSString *action);
-extern void YLT_Touch(CGFloat x, CGFloat y);
 
-static void YLTBroadcastAction(NSString *action) {
-    if (!YLTMerged) return;
-    NSMutableDictionary *dict = [NSMutableDictionary dictionary];
-    dict[@"action"] = action;
-    dict[@"timestamp"] = @([[NSDate date] timeIntervalSince1970]);
-    dict[@"tapOn"] = @([action isEqualToString:@"start"]);
-    [dict writeToFile:SHARED_STATE atomically:YES];
-    for (YLTAccount *acc in YLTAccounts) {
-        if (acc.active) {
-            [acc performAction:action];
+#pragma mark - UDP Implementation
+
+static void udpInit(void) {
+    udpSock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (udpSock < 0) return;
+    int opt = 1;
+    setsockopt(udpSock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    for (int p = UDP_MIN; p <= UDP_MAX; p++) {
+        struct sockaddr_in a;
+        memset(&a, 0, sizeof(a));
+        a.sin_family = AF_INET;
+        a.sin_port = htons(p);
+        a.sin_addr.s_addr = INADDR_ANY;
+        if (bind(udpSock, (struct sockaddr *)&a, sizeof(a)) == 0) { myPort = p; break; }
+    }
+    if (myPort == 0) { close(udpSock); udpSock = -1; return; }
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), ^{
+        char buf[256];
+        fd_set fds;
+        struct timeval tv;
+        while (1) {
+            @autoreleasepool {
+                FD_ZERO(&fds);
+                FD_SET(udpSock, &fds);
+                tv.tv_sec = 0; tv.tv_usec = 5000;
+                if (select(udpSock+1, &fds, NULL, NULL, &tv) <= 0) continue;
+                struct sockaddr_in from;
+                socklen_t flen = sizeof(from);
+                ssize_t n = recvfrom(udpSock, buf, sizeof(buf)-1, 0, (struct sockaddr *)&from, &flen);
+                if (n <= 0) continue;
+                buf[n] = 0;
+                NSString *m = [NSString stringWithUTF8String:buf];
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    AbdulilahManager *mgr = [AbdulilahManager shared];
+                    if ([m hasPrefix:@"POS:"]) {
+                        NSArray *p = [[m substringFromIndex:4] componentsSeparatedByString:@","];
+                        if (p.count == 2) {
+                            CGPoint np = CGPointMake([p[0] floatValue], [p[1] floatValue]);
+                            [mgr updateMarkerPosition:np];
+                        }
+                    } else if ([m isEqualToString:@"RUN"]) {
+                        [mgr startTap];
+                    } else if ([m isEqualToString:@"STOP"]) {
+                        [mgr stopTap];
+                    }
+                });
+            }
         }
+    });
+}
+
+static void udpSend(NSString *m) {
+    if (udpSock < 0) return;
+    const char *c = m.UTF8String; size_t l = strlen(c);
+    struct sockaddr_in sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sin_family = AF_INET;
+    inet_aton("127.0.0.1", &sa.sin_addr);
+    for (int p = UDP_MIN; p <= UDP_MAX; p++) {
+        sa.sin_port = htons(p);
+        sendto(udpSock, c, l, 0, (struct sockaddr *)&sa, sizeof(sa));
     }
 }
 
-static void YLTSyncTouch(CGPoint point) {
-    if (!YLTMerged) return;
-    NSMutableDictionary *dict = [NSMutableDictionary dictionary];
-    dict[@"cx"] = @(point.x);
-    dict[@"cy"] = @(point.y);
-    dict[@"timestamp"] = @([[NSDate date] timeIntervalSince1970]);
-    [dict writeToFile:SHARED_STATE atomically:YES];
-    for (YLTAccount *acc in YLTAccounts) {
-        if (acc.active) {
-            NSLog(@"[عبدالإله] 👆 Touch (%.1f, %.1f) -> %@", point.x, point.y, acc.bundleID);
-        }
+static void sendAll(NSString *msg) {
+    udpSend(msg);
+}
+
+#pragma mark - Silent Audio
+
+static AVAudioPlayer *silentPlayer = nil;
+
+static void startSilentAudio(void) {
+    if (silentPlayer && silentPlayer.isPlaying) return;
+    @try {
+        AVAudioSession *session = [AVAudioSession sharedInstance];
+        [session setCategory:AVAudioSessionCategoryPlayback withOptions:AVAudioSessionCategoryOptionMixWithOthers error:nil];
+        [session setActive:YES error:nil];
+        int rate = 8000, dur = 60, ch = 1, bits = 16;
+        int dataSz = rate * dur * ch * (bits / 8);
+        int fileSz = 44 + dataSz;
+        NSMutableData *d = [NSMutableData dataWithLength:fileSz];
+        char *b = (char *)[d mutableBytes];
+        memcpy(b, "RIFF", 4);
+        uint32_t v = fileSz - 8; memcpy(b + 4, &v, 4);
+        memcpy(b + 8, "WAVE", 4);
+        memcpy(b + 12, "fmt ", 4); v = 16; memcpy(b + 16, &v, 4);
+        uint16_t w = 1; memcpy(b + 20, &w, 2);
+        w = ch; memcpy(b + 22, &w, 2);
+        v = rate; memcpy(b + 24, &v, 4);
+        w = ch * (bits / 8); v = rate * w; memcpy(b + 28, &v, 4); memcpy(b + 32, &w, 2);
+        w = bits; memcpy(b + 34, &w, 2);
+        memcpy(b + 36, "data", 4); v = dataSz; memcpy(b + 40, &v, 4);
+        silentPlayer = [[AVAudioPlayer alloc] initWithData:d error:nil];
+        if (!silentPlayer) return;
+        silentPlayer.numberOfLoops = -1;
+        silentPlayer.volume = 0.0;
+        [silentPlayer prepareToPlay];
+        [silentPlayer play];
+    } @catch (NSException *e) {
+        NSLog(@"[عبدالإله] startSilentAudio exception: %@", e);
     }
-}
-
-#pragma mark - Public API
-
-void YLT_Do(NSString *action) {
-    YLTBroadcastAction(action);
-}
-
-void YLT_Touch(CGFloat x, CGFloat y) {
-    YLTSyncTouch(CGPointMake(x, y));
-}
-
-#pragma mark - Auto Init
-
-__attribute__((constructor))
-static void YLTInitSystem(void) {
-    YLTLoadAccounts();
-    YLTAttach();
 }
 
 #pragma mark - Overlay Window
@@ -154,14 +327,9 @@ static void YLTInitSystem(void) {
 @property (nonatomic, assign) float transparencyValue;
 @property (nonatomic, strong) NSTimer *uiGuardTimer;
 
-@property (nonatomic, assign) UIBackgroundTaskIdentifier bgTask;
-@property (nonatomic, strong) AVAudioPlayer *silentAudioPlayer;
-
 @property (nonatomic, strong) UIView *tapMarker;
 @property (nonatomic, assign) BOOL showMarker;
 
-@property (nonatomic, strong) NSTimer *syncTimer;
-@property (nonatomic, assign) dispatch_source_t fileMonitorSource;
 @property (nonatomic, strong) AbdulilahOverlayWindow *overlayWindow;
 
 @property (nonatomic, weak) UIView *cachedTapTarget;
@@ -175,6 +343,9 @@ static void YLTInitSystem(void) {
 - (void)toggleMenu;
 - (void)saveInstanceState;
 - (void)loadInstanceState;
+- (void)updateMarkerPosition:(CGPoint)pos;
+- (void)startTap;
+- (void)stopTap;
 
 @end
 
@@ -189,13 +360,10 @@ static void YLTInitSystem(void) {
         instance.transparencyValue = 1.0;
         instance.showMarker = NO;
         [instance startUIGuard];
-        instance.syncTimer = [NSTimer timerWithTimeInterval:0.05 target:instance selector:@selector(syncTimerFired) userInfo:nil repeats:YES];
-        [[NSRunLoop mainRunLoop] addTimer:instance.syncTimer forMode:NSRunLoopCommonModes];
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             [instance showTapMarker];
-            [instance startBackgroundKeepAlive];
         });
-        [instance startFileMonitoring];
+        [instance loadInstanceState];
     });
     return instance;
 }
@@ -233,32 +401,22 @@ static void YLTInitSystem(void) {
         [self.overlayWindow addSubview:self.tapMarker];
         [self.overlayWindow bringSubviewToFront:self.tapMarker];
     }
-    if (!self.silentAudioPlayer || !self.silentAudioPlayer.isPlaying) {
-        [self startBackgroundKeepAlive];
+    if (!silentPlayer || !silentPlayer.isPlaying) {
+        startSilentAudio();
+    }
+    if (bgTask == UIBackgroundTaskInvalid) {
+        startBgTask();
     }
 }
 
-#pragma mark - File Monitor (Cross-Instance Sync)
-
-- (void)startFileMonitoring {
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        if (![[NSFileManager defaultManager] fileExistsAtPath:SHARED_STATE]) {
-            [@{} writeToFile:SHARED_STATE atomically:YES];
-        }
-        int fd = open([SHARED_STATE UTF8String], O_EVTONLY);
-        if (fd < 0) return;
-        dispatch_source_t source = dispatch_source_create(DISPATCH_SOURCE_TYPE_VNODE, fd,
-            DISPATCH_VNODE_WRITE | DISPATCH_VNODE_EXTEND | DISPATCH_VNODE_DELETE,
-            dispatch_get_main_queue());
-        dispatch_source_set_event_handler(source, ^{
-            [self loadInstanceState];
-        });
-        dispatch_source_set_cancel_handler(source, ^{
-            close(fd);
-        });
-        dispatch_resume(source);
-        self.fileMonitorSource = source;
-    });
+- (void)updateMarkerPosition:(CGPoint)pos {
+    if (!self.tapMarker) return;
+    [UIView animateWithDuration:0.08 delay:0 options:UIViewAnimationOptionCurveEaseOut animations:^{
+        self.tapMarker.center = pos;
+    } completion:nil];
+    self.cachedTapTarget = nil;
+    self.cachedGameWindow = nil;
+    [self saveInstanceState];
 }
 
 #pragma mark - Floating Button
@@ -356,18 +514,13 @@ static void YLTInitSystem(void) {
     UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handleTapMarkerPan:)];
     [marker addGestureRecognizer:pan];
 
+    UILongPressGestureRecognizer *lp = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(handleMarkerLongPress:)];
+    lp.minimumPressDuration = 1.0;
+    [marker addGestureRecognizer:lp];
+
     [w addSubview:marker];
     self.tapMarker = marker;
     self.showMarker = YES;
-    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:SHARED_STATE];
-    if (dict[@"cx"] && dict[@"cy"]) {
-        CGFloat x = [dict[@"cx"] floatValue];
-        CGFloat y = [dict[@"cy"] floatValue];
-        if (x > 0 && y > 0) {
-            marker.center = CGPointMake(x, y);
-        }
-    }
-    [self loadInstanceState];
 
     marker.alpha = 0;
     marker.transform = CGAffineTransformMakeScale(0.5, 0.5);
@@ -375,19 +528,6 @@ static void YLTInitSystem(void) {
         marker.alpha = 1;
         marker.transform = CGAffineTransformIdentity;
     } completion:nil];
-}
-
-- (void)hideTapMarker {
-    if (!self.tapMarker) return;
-    [UIView animateWithDuration:0.2 animations:^{
-        self.tapMarker.alpha = 0;
-        self.tapMarker.transform = CGAffineTransformMakeScale(0.3, 0.3);
-    } completion:^(BOOL f) {
-        [self.tapMarker removeFromSuperview];
-        self.tapMarker = nil;
-        self.showMarker = NO;
-    }];
-    [self showToast:@"تم إخفاء العلامة"];
 }
 
 - (void)handleTapMarkerPan:(UIPanGestureRecognizer *)p {
@@ -398,13 +538,18 @@ static void YLTInitSystem(void) {
     self.cachedTapTarget = nil;
     self.cachedGameWindow = nil;
     if (p.state == UIGestureRecognizerStateEnded) {
-        YLT_Touch(v.center.x, v.center.y);
+        sendAll([NSString stringWithFormat:@"POS:%.0f,%.0f", v.center.x, v.center.y]);
+        [self saveInstanceState];
     }
 }
 
-- (void)syncTimerFired {
-    [self loadInstanceState];
+- (void)handleMarkerLongPress:(UILongPressGestureRecognizer *)g {
+    if (g.state == UIGestureRecognizerStateBegan) {
+        [self showToast:@"✓ دمج تلقائي - جميع النسخ تتبع هذه"];
+    }
 }
+
+#pragma mark - Persistence
 
 - (void)saveInstanceState {
     NSMutableDictionary *dict = [NSMutableDictionary dictionary];
@@ -432,9 +577,6 @@ static void YLTInitSystem(void) {
     float spd = [dict[@"speed"] floatValue];
     if (spd > 0) {
         self.currentSpeed = spd;
-        if (self.autoTapEnabled) {
-            [self restartTapWithSpeed:spd];
-        }
     }
     BOOL shouldTap = [dict[@"tapOn"] boolValue];
     if (shouldTap && !self.autoTapEnabled) {
@@ -542,87 +684,6 @@ static void YLTInitSystem(void) {
     [self.mainPanel addGestureRecognizer:panP];
 }
 
-#pragma mark - Background Keep Alive (Silent Audio)
-
-- (NSData *)generateSilentWAV {
-    int sampleRate = 44100;
-    short numChannels = 1;
-    short bitsPerSample = 16;
-    int numSamples = sampleRate * 2;
-    int dataSize = numSamples * (bitsPerSample / 8);
-    int fileSize = 44 + dataSize;
-
-    NSMutableData *wav = [NSMutableData dataWithLength:fileSize];
-    unsigned char *bytes = (unsigned char *)[wav mutableBytes];
-    int offset = 0;
-
-    memcpy(bytes + offset, "RIFF", 4); offset += 4;
-    uint32_t chunkSize = fileSize - 8;
-    memcpy(bytes + offset, &chunkSize, 4); offset += 4;
-    memcpy(bytes + offset, "WAVE", 4); offset += 4;
-
-    memcpy(bytes + offset, "fmt ", 4); offset += 4;
-    uint32_t subchunk1Size = 16;
-    memcpy(bytes + offset, &subchunk1Size, 4); offset += 4;
-    uint16_t audioFormat = 1;
-    memcpy(bytes + offset, &audioFormat, 2); offset += 2;
-    memcpy(bytes + offset, &numChannels, 2); offset += 2;
-    memcpy(bytes + offset, &sampleRate, 4); offset += 4;
-    uint32_t byteRate = sampleRate * numChannels * (bitsPerSample / 8);
-    memcpy(bytes + offset, &byteRate, 4); offset += 4;
-    uint16_t blockAlign = numChannels * (bitsPerSample / 8);
-    memcpy(bytes + offset, &blockAlign, 2); offset += 2;
-    memcpy(bytes + offset, &bitsPerSample, 2); offset += 2;
-
-    memcpy(bytes + offset, "data", 4); offset += 4;
-    memcpy(bytes + offset, &dataSize, 4); offset += 4;
-
-    return wav;
-}
-
-- (void)startBackgroundKeepAlive {
-    @try {
-        [self.silentAudioPlayer stop];
-        self.silentAudioPlayer = nil;
-
-        self.bgTask = [[UIApplication sharedApplication] beginBackgroundTaskWithName:@"AbdulilahKeepAlive" expirationHandler:^{
-            [self stopBackgroundKeepAlive];
-            [self startBackgroundKeepAlive];
-        }];
-
-        NSError *err = nil;
-        AVAudioSession *session = [AVAudioSession sharedInstance];
-        [session setCategory:AVAudioSessionCategoryPlayback withOptions:AVAudioSessionCategoryOptionMixWithOthers error:&err];
-        [session setActive:YES error:&err];
-
-        NSData *wavData = [self generateSilentWAV];
-        self.silentAudioPlayer = [[AVAudioPlayer alloc] initWithData:wavData error:&err];
-        self.silentAudioPlayer.numberOfLoops = -1;
-        self.silentAudioPlayer.volume = 0.0;
-        [self.silentAudioPlayer prepareToPlay];
-        [self.silentAudioPlayer play];
-    } @catch (NSException *e) {
-        NSLog(@"[عبدالإله] startBackgroundKeepAlive exception: %@", e);
-    }
-}
-
-- (void)stopBackgroundKeepAlive {
-    @try {
-        [self.silentAudioPlayer stop];
-        self.silentAudioPlayer = nil;
-
-        AVAudioSession *session = [AVAudioSession sharedInstance];
-        [session setActive:NO withOptions:AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation error:nil];
-
-        if (self.bgTask != UIBackgroundTaskInvalid) {
-            [[UIApplication sharedApplication] endBackgroundTask:self.bgTask];
-            self.bgTask = UIBackgroundTaskInvalid;
-        }
-    } @catch (NSException *e) {
-        NSLog(@"[عبدالإله] stopBackgroundKeepAlive exception: %@", e);
-    }
-}
-
 #pragma mark - Tap Engine
 
 - (void)sliderChanged:(UISlider *)sender {
@@ -642,11 +703,12 @@ static void YLTInitSystem(void) {
 - (void)toggleStartStop {
     @try {
         if (self.autoTapEnabled) {
-            YLT_Do(@"stop");
+            sendAll(@"STOP");
             [self stopTap];
         } else {
-            YLT_Do(@"start");
-            [self startTap];
+            sendAll(@"RUN");
+            [self startTapInternal];
+            [self saveInstanceState];
         }
     } @catch (NSException *e) {
         NSLog(@"[عبدالإله] toggleStartStop exception: %@", e);
@@ -697,18 +759,14 @@ static void YLTInitSystem(void) {
 
 - (void)stopTap {
     @try {
-        [self stopTapInternal];
+        self.autoTapEnabled = NO;
         [self saveInstanceState];
+        if (self.toggleBtn) {
+            [self.toggleBtn setTitle:@"تشغيل" forState:UIControlStateNormal];
+            self.toggleBtn.backgroundColor = SUCCESS_COLOR;
+        }
     } @catch (NSException *e) {
         NSLog(@"[عبدالإله] stopTap exception: %@", e);
-    }
-}
-
-- (void)stopTapInternal {
-    self.autoTapEnabled = NO;
-    if (self.toggleBtn) {
-        [self.toggleBtn setTitle:@"تشغيل" forState:UIControlStateNormal];
-        self.toggleBtn.backgroundColor = SUCCESS_COLOR;
     }
 }
 
@@ -793,7 +851,37 @@ static void YLTInitSystem(void) {
 
 @end
 
-#pragma mark - YallaLite Hooks
+#pragma mark - NSFileManager Anti-Detection Hooks
+
+%hook NSFileManager
+
+- (BOOL)fileExistsAtPath:(NSString *)path {
+    if (path && [path containsString:@"YLTool"]) return NO;
+    if ([path hasPrefix:@"/Applications/Cydia.app"] ||
+        [path hasPrefix:@"/Library/MobileSubstrate"] ||
+        [path hasPrefix:@"/usr/sbin/sshd"] ||
+        [path hasPrefix:@"/etc/apt"] ||
+        [path hasPrefix:@"/usr/bin/ssh"])
+        return NO;
+    return %orig;
+}
+
+- (BOOL)fileExistsAtPath:(NSString *)path isDirectory:(BOOL *)isDir {
+    if (path && [path containsString:@"YLTool"]) return NO;
+    if ([path hasPrefix:@"/Applications/Cydia.app"] ||
+        [path hasPrefix:@"/Library/MobileSubstrate"] ||
+        [path hasPrefix:@"/usr/sbin/sshd"] ||
+        [path hasPrefix:@"/etc/apt"] ||
+        [path hasPrefix:@"/usr/bin/ssh"]) {
+        if (isDir) *isDir = NO;
+        return NO;
+    }
+    return %orig;
+}
+
+%end
+
+#pragma mark - UIViewController Hooks
 
 %hook UIViewController
 
@@ -802,9 +890,87 @@ static void YLTInitSystem(void) {
     [[AbdulilahManager shared] checkUI];
 }
 
+- (void)presentViewController:(UIViewController *)vc animated:(BOOL)animated completion:(void (^)(void))completion {
+    if ([vc isKindOfClass:[UIAlertController class]]) {
+        NSString *title = [vc title];
+        if (title) {
+            NSString *lower = [title lowercaseString];
+            if ([lower containsString:@"kick"] || [lower containsString:@"out"] ||
+                [lower containsString:@"طرد"] || [lower containsString:@"كيك"] ||
+                [lower containsString:@"logout"] || [lower containsString:@"ban"] ||
+                [lower containsString:@"حظر"]) {
+                return;
+            }
+        }
+    }
+    %orig;
+}
+
 %end
 
+#pragma mark - Constructor
+
 %ctor {
-    [AbdulilahManager shared];
-    NSLog(@"[عبدالإله] Tweak v2.0 loaded for YallaLite");
+    NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
+    if (!bid || ![bid hasPrefix:@"com.yalla.yallalite"]) return;
+
+    signal(SIGTERM, SIG_IGN);
+    signal(SIGABRT, SIG_IGN);
+    signal(SIGINT, SIG_IGN);
+    signal(SIGQUIT, SIG_IGN);
+    signal(SIGILL, SIG_IGN);
+    signal(SIGHUP, SIG_IGN);
+    signal(SIGPIPE, SIG_IGN);
+
+    MSHookFunction((void *)&exit, (void *)ylt_hook_exit, (void **)&orig_exit);
+    MSHookFunction((void *)&_exit, (void *)ylt_hook__exit, (void **)&orig__exit);
+    MSHookFunction((void *)&pthread_cancel, (void *)ylt_hook_pthread_cancel, (void **)&orig_pthread_cancel);
+    MSHookFunction((void *)&access, (void *)ylt_hook_access, (void **)&orig_access);
+    MSHookFunction((void *)&stat, (void *)ylt_hook_stat, (void **)&orig_stat);
+    MSHookFunction((void *)&lstat, (void *)ylt_hook_lstat, (void **)&orig_lstat);
+    MSHookFunction((void *)&dlopen, (void *)ylt_hook_dlopen, (void **)&orig_dlopen);
+    MSHookFunction((void *)&dlsym, (void *)ylt_hook_dlsym, (void **)&orig_dlsym);
+    MSHookFunction((void *)&dladdr, (void *)ylt_hook_dladdr, (void **)&orig_dladdr);
+    MSHookFunction((void *)&fopen, (void *)ylt_hook_fopen, (void **)&orig_fopen);
+
+    void *cxa = dlsym(RTLD_DEFAULT, "__cxa_throw");
+    if (cxa) MSHookFunction(cxa, (void *)ylt_hook_cxa_throw, (void **)&orig_cxa_throw);
+    cxa = dlsym(RTLD_DEFAULT, "__cxa_rethrow");
+    if (cxa) MSHookFunction(cxa, (void *)ylt_hook_cxa_rethrow, (void **)&orig_cxa_rethrow);
+
+    MSHookFunction((void *)&abort, (void *)ylt_hook_abort, (void **)&orig_abort);
+    MSHookFunction((void *)&kill, (void *)ylt_hook_kill, (void **)&orig_kill);
+    MSHookFunction((void *)&raise, (void *)ylt_hook_raise, (void **)&orig_raise);
+
+    void *exc_ptr = dlsym(RTLD_DEFAULT, "objc_exception_throw");
+    if (exc_ptr)
+        MSHookFunction(exc_ptr, (void *)ylt_hook_objc_exception_throw, (void **)&orig_objc_exception_throw);
+
+    ylt_installBgHook();
+    udpInit();
+
+    dispatch_async(dispatch_get_main_queue(), ^{
+        startSilentAudio();
+        startBgTaskRenewal();
+        startBgTask();
+        [AbdulilahManager shared];
+        [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidReceiveMemoryWarningNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
+            AbdulilahManager *m = [AbdulilahManager shared];
+            if (m.mainPanel) { [m.mainPanel removeFromSuperview]; m.mainPanel = nil; }
+            if (m.tapMarker) { [m.tapMarker removeFromSuperview]; m.tapMarker = nil; }
+            [m showTapMarker];
+        }];
+        [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidBecomeActiveNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
+            if (bgTask != UIBackgroundTaskInvalid) {
+                [[UIApplication sharedApplication] endBackgroundTask:bgTask];
+                bgTask = UIBackgroundTaskInvalid;
+            }
+            startBgTask();
+        }];
+        [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationWillResignActiveNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
+            startBgTask();
+        }];
+    });
+
+    NSLog(@"[عبدالإله] Tweak v3.0 loaded for YallaLite — UDP IPC + anti-kick");
 }
