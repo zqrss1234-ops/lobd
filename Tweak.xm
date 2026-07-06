@@ -4,7 +4,7 @@
 #import <AudioToolbox/AudioToolbox.h>
 #import <AVFoundation/AVFoundation.h>
 
-#define SHARED_STATE   @"/var/mobile/Library/Preferences/com.abdulilah.state.plist"
+#define SHARED_STATE   @"/tmp/com.abdulilah.state.plist"
 
 #define PRIMARY_COLOR    [UIColor colorWithRed:0.00 green:0.60 blue:1.00 alpha:1.0]
 #define SUCCESS_COLOR    [UIColor colorWithRed:0.00 green:0.50 blue:1.00 alpha:1.0]
@@ -44,6 +44,7 @@
 @property (nonatomic, assign) BOOL showMarker;
 
 @property (nonatomic, strong) NSTimer *syncTimer;
+@property (nonatomic, assign) dispatch_source_t fileMonitorSource;
 @property (nonatomic, strong) AbdulilahOverlayWindow *overlayWindow;
 
 @property (nonatomic, weak) UIView *cachedTapTarget;
@@ -77,6 +78,7 @@
             [instance showTapMarker];
             [instance startBackgroundKeepAlive];
         });
+        [instance startFileMonitoring];
     });
     return instance;
 }
@@ -117,6 +119,29 @@
     if (!self.silentAudioPlayer || !self.silentAudioPlayer.isPlaying) {
         [self startBackgroundKeepAlive];
     }
+}
+
+#pragma mark - File Monitor (Cross-Instance Sync)
+
+- (void)startFileMonitoring {
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        if (![[NSFileManager defaultManager] fileExistsAtPath:SHARED_STATE]) {
+            [@{} writeToFile:SHARED_STATE atomically:YES];
+        }
+        int fd = open([SHARED_STATE UTF8String], O_EVTONLY);
+        if (fd < 0) return;
+        dispatch_source_t source = dispatch_source_create(DISPATCH_SOURCE_TYPE_VNODE, fd,
+            DISPATCH_VNODE_WRITE | DISPATCH_VNODE_EXTEND | DISPATCH_VNODE_DELETE,
+            dispatch_get_main_queue());
+        dispatch_source_set_event_handler(source, ^{
+            [self loadInstanceState];
+        });
+        dispatch_source_set_cancel_handler(source, ^{
+            close(fd);
+        });
+        dispatch_resume(source);
+        self.fileMonitorSource = source;
+    });
 }
 
 #pragma mark - Floating Button
