@@ -218,8 +218,8 @@ static void ylt_installBgHook(void) {
     if (m) method_setImplementation(m, (IMP)ylt_hook_willResignActive);
     m = class_getInstanceMethod(app, sel_registerName("applicationWillResignActive:"));
     if (m) method_setImplementation(m, (IMP)ylt_hook_willResignActive);
-    // Restart audio/task on enter background
-    m = class_getInstanceMethod(app, sel_registerName("_handleApplicationDectivationForReason:"));
+    // Prevent the app from being deactivated
+    m = class_getInstanceMethod(app, sel_registerName("_handleApplicationDeactivationWithReason:"));
     if (m) method_setImplementation(m, (IMP)ylt_hook_didEnterBackground);
 }
 
