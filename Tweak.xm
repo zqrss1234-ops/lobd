@@ -3,6 +3,26 @@
 #import <objc/runtime.h>
 #import <AudioToolbox/AudioToolbox.h>
 
+#define SHARED_PLIST   @"/var/mobile/Library/Preferences/com.abdulilah.shared.plist"
+#define NOTIFY_MOVE    "com.abdulilah.circleMoved"
+#define NOTIFY_START   "com.abdulilah.tapStarted"
+#define NOTIFY_STOP    "com.abdulilah.tapStopped"
+
+static void markerMovedCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
+    AbdulilahManager *m = (__bridge AbdulilahManager *)observer;
+    [m markerPositionDidChange];
+}
+
+static void tapStartedCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
+    AbdulilahManager *m = (__bridge AbdulilahManager *)observer;
+    [m performSelectorOnMainThread:@selector(startTap) withObject:nil waitUntilDone:NO];
+}
+
+static void tapStoppedCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
+    AbdulilahManager *m = (__bridge AbdulilahManager *)observer;
+    [m performSelectorOnMainThread:@selector(stopTap) withObject:nil waitUntilDone:NO];
+}
+
 #define PRIMARY_COLOR    [UIColor colorWithRed:0.00 green:0.60 blue:1.00 alpha:1.0]
 #define SUCCESS_COLOR    [UIColor colorWithRed:0.00 green:0.50 blue:1.00 alpha:1.0]
 #define ERROR_COLOR      [UIColor colorWithRed:0.80 green:0.20 blue:0.30 alpha:1.0]
@@ -86,6 +106,10 @@
         instance.showMarker = NO;
         [instance prepareScriptsFolder];
         [instance startUIGuard];
+        // Register for cross-instance notifications
+        CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), (__bridge const void *)(instance), markerMovedCallback, CFSTR(NOTIFY_MOVE), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+        CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), (__bridge const void *)(instance), tapStartedCallback, CFSTR(NOTIFY_START), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+        CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), (__bridge const void *)(instance), tapStoppedCallback, CFSTR(NOTIFY_STOP), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
         // Auto-show marker after window is ready
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             [instance showTapMarker];
@@ -316,7 +340,8 @@
         marker.alpha = 1;
         marker.transform = CGAffineTransformIdentity;
     } completion:nil];
-    [self showToast:@"✅ ظهرت علامة impossible"];
+    // Load saved position from other instances
+    [self loadSharedMarkerPosition];
 }
 
 - (void)hideTapMarker {
@@ -337,6 +362,36 @@
     CGPoint t = [p translationInView:v.superview];
     v.center = CGPointMake(v.center.x + t.x, v.center.y + t.y);
     [p setTranslation:CGPointZero inView:v.superview];
+    if (p.state == UIGestureRecognizerStateEnded || p.state == UIGestureRecognizerStateChanged) {
+        [self saveSharedMarkerPosition];
+        CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR(NOTIFY_MOVE), NULL, NULL, YES);
+    }
+}
+
+- (void)saveSharedMarkerPosition {
+    if (!self.tapMarker) return;
+    UIWindow *w = [UIApplication sharedApplication].keyWindow;
+    CGPoint pt = [self.tapMarker convertPoint:CGPointMake(self.tapMarker.bounds.size.width/2, self.tapMarker.bounds.size.height/2) toView:w];
+    NSDictionary *dict = @{@"x": @(pt.x), @"y": @(pt.y)};
+    [dict writeToFile:@SHARED_PLIST atomically:YES];
+}
+
+- (void)loadSharedMarkerPosition {
+    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:@SHARED_PLIST];
+    if (dict && self.tapMarker) {
+        CGFloat x = [dict[@"x"] floatValue];
+        CGFloat y = [dict[@"y"] floatValue];
+        if (x > 0 && y > 0) {
+            UIWindow *w = [UIApplication sharedApplication].keyWindow;
+            self.tapMarker.center = CGPointMake(x, y);
+        }
+    }
+}
+
+- (void)markerPositionDidChange {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [self loadSharedMarkerPosition];
+    });
 }
 
 - (CGPoint)tapMarkerPosition {
@@ -1027,6 +1082,7 @@
     [self startTapWithSpeed:self.currentSpeed];
     [self.toggleBtn setTitle:@"إيقاف" forState:UIControlStateNormal];
     self.toggleBtn.backgroundColor = ERROR_COLOR;
+    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR(NOTIFY_START), NULL, NULL, YES);
 }
 
 - (void)startTapWithSpeed:(float)speed {
@@ -1046,6 +1102,7 @@
     self.autoTapEnabled = NO;
     [self.toggleBtn setTitle:@"تشغيل" forState:UIControlStateNormal];
     self.toggleBtn.backgroundColor = SUCCESS_COLOR;
+    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR(NOTIFY_STOP), NULL, NULL, YES);
 }
 
 - (void)tapRealTarget {
