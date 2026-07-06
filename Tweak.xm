@@ -95,7 +95,7 @@
 @property (nonatomic, weak) UIWindow *cachedGameWindow;
 @property (nonatomic, strong) NSSet *emptyTouches;
 @property (nonatomic, strong) UIEvent *dummyEvent;
-@property (nonatomic, strong) NSTimer *tapTimer;
+@property (nonatomic, assign) NSUInteger tapGeneration;
 
 + (instancetype)shared;
 - (void)showFloatingButton;
@@ -494,6 +494,13 @@
         if (self.autoTapEnabled) {
             [self restartTapWithSpeed:spd];
         }
+    }
+    // Sync auto-tap state across instances
+    BOOL shouldTap = [dict[@"tapOn"] boolValue];
+    if (shouldTap && !self.autoTapEnabled) {
+        [self startTap];
+    } else if (!shouldTap && self.autoTapEnabled) {
+        [self stopTap];
     }
     // Load tracked accounts and rebuild circles
     NSArray *savedAccounts = dict[@"accounts"];
@@ -1264,80 +1271,92 @@
 }
 
 - (void)restartTapWithSpeed:(float)speed {
-    [self.tapTimer invalidate];
-    self.tapTimer = nil;
+    self.tapGeneration++;
     [self startTapWithSpeed:speed];
 }
 
 - (void)toggleStartStop {
-    if (self.autoTapEnabled) {
-        [self stopTap];
-    } else {
-        [self startTap];
+    @try {
+        if (self.autoTapEnabled) {
+            [self stopTap];
+        } else {
+            [self startTap];
+        }
+    } @catch (NSException *e) {
+        NSLog(@"[عبدالإله] toggleStartStop exception: %@", e);
     }
 }
 
 - (void)startTap {
-    if (self.autoTapEnabled) return;
-    [self startTapInternal];
-    [self saveInstanceState];
-    // Sync position to all instances before starting
-    if (self.tapMarker) {
-        uint64_t state = ((uint64_t)(int32_t)(self.tapMarker.center.x * 10) << 32) | ((uint64_t)(int32_t)(self.tapMarker.center.y * 10) & 0xFFFFFFFF);
-        notify_set_state(moveToken, state);
-        notify_post(NOTIFY_MOVE);
+    @try {
+        if (self.autoTapEnabled) return;
+        [self startTapInternal];
+        [self saveInstanceState];
+        // Notify other instances (safe with @try)
+        if (self.tapMarker) {
+            uint64_t state = ((uint64_t)(int32_t)(self.tapMarker.center.x * 10) << 32) | ((uint64_t)(int32_t)(self.tapMarker.center.y * 10) & 0xFFFFFFFF);
+            notify_set_state(moveToken, state);
+            notify_post(NOTIFY_MOVE);
+        }
+        notify_post(NOTIFY_START);
+    } @catch (NSException *e) {
+        NSLog(@"[عبدالإله] startTap exception: %@", e);
     }
-    notify_post(NOTIFY_START);
 }
 
 - (void)startTapInternal {
-    if (self.autoTapEnabled) return;
-    self.autoTapEnabled = YES;
-    [self startTapWithSpeed:self.currentSpeed];
-    if (self.toggleBtn) {
-        [self.toggleBtn setTitle:@"إيقاف" forState:UIControlStateNormal];
-        self.toggleBtn.backgroundColor = ERROR_COLOR;
+    @try {
+        if (self.autoTapEnabled) return;
+        self.autoTapEnabled = YES;
+        [self startTapWithSpeed:self.currentSpeed];
+        if (self.toggleBtn) {
+            [self.toggleBtn setTitle:@"إيقاف" forState:UIControlStateNormal];
+            self.toggleBtn.backgroundColor = ERROR_COLOR;
+        }
+    } @catch (NSException *e) {
+        NSLog(@"[عبدالإله] startTapInternal exception: %@", e);
     }
 }
 
 - (void)startTapWithSpeed:(float)speed {
     if (speed < 0.001f) speed = 0.001f;
-    [self.tapTimer invalidate];
-    self.tapTimer = [NSTimer scheduledTimerWithTimeInterval:speed target:self selector:@selector(tapTimerFired) userInfo:nil repeats:YES];
-    [[NSRunLoop mainRunLoop] addTimer:self.tapTimer forMode:NSDefaultRunLoopMode];
-}
-
-- (void)tapTimerFired {
-    if (!self.autoTapEnabled) {
-        [self.tapTimer invalidate];
-        self.tapTimer = nil;
-        return;
-    }
-    [self tapRealTarget];
-    // Extra taps for features
-    if (self.goldenShotEnabled) [self tapRealTarget];
-    if (self.freezeLinesEnabled) { [self tapRealTarget]; [self tapRealTarget]; }
-    if (self.antiRecordEnabled) {
-        for (int i = 0; i < 8; i++) [self tapRealTarget];
-    }
+    self.tapGeneration++;
+    NSUInteger myGen = self.tapGeneration;
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        @autoreleasepool {
+            while (self.autoTapEnabled && self.tapGeneration == myGen) {
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    [self tapRealTarget];
+                    if (self.goldenShotEnabled) [self tapRealTarget];
+                    if (self.freezeLinesEnabled) { [self tapRealTarget]; [self tapRealTarget]; }
+                    if (self.antiRecordEnabled) {
+                        for (int i = 0; i < 8; i++) [self tapRealTarget];
+                    }
+                });
+                [NSThread sleepForTimeInterval:speed];
+            }
+        }
+    });
 }
 
 - (void)stopTap {
-    [self stopTapInternal];
-    [self saveInstanceState];
-    // Sync position before stopping
-    if (self.tapMarker) {
-        uint64_t state = ((uint64_t)(int32_t)(self.tapMarker.center.x * 10) << 32) | ((uint64_t)(int32_t)(self.tapMarker.center.y * 10) & 0xFFFFFFFF);
-        notify_set_state(moveToken, state);
-        notify_post(NOTIFY_MOVE);
+    @try {
+        [self stopTapInternal];
+        [self saveInstanceState];
+        // Notify other instances (safe with @try)
+        if (self.tapMarker) {
+            uint64_t state = ((uint64_t)(int32_t)(self.tapMarker.center.x * 10) << 32) | ((uint64_t)(int32_t)(self.tapMarker.center.y * 10) & 0xFFFFFFFF);
+            notify_set_state(moveToken, state);
+            notify_post(NOTIFY_MOVE);
+        }
+        notify_post(NOTIFY_STOP);
+    } @catch (NSException *e) {
+        NSLog(@"[عبدالإله] stopTap exception: %@", e);
     }
-    notify_post(NOTIFY_STOP);
 }
 
 - (void)stopTapInternal {
     self.autoTapEnabled = NO;
-    [self.tapTimer invalidate];
-    self.tapTimer = nil;
     if (self.toggleBtn) {
         [self.toggleBtn setTitle:@"تشغيل" forState:UIControlStateNormal];
         self.toggleBtn.backgroundColor = SUCCESS_COLOR;
@@ -1345,42 +1364,46 @@
 }
 
 - (void)tapRealTarget {
-    if (!self.autoTapEnabled) return;
-    CGPoint tapPt = [self tapMarkerPosition];
-    if (tapPt.x <= 0 && tapPt.y <= 0) return;
-    
-    UIView *targetView = self.cachedTapTarget;
-    UIWindow *gameWindow = self.cachedGameWindow;
-    
-    // Refresh cache if stale
-    if (!targetView || targetView.hidden || !targetView.userInteractionEnabled || !gameWindow) {
-        for (UIWindow *window in [[UIApplication sharedApplication] windows]) {
-            if (window == self.overlayWindow || window.hidden) continue;
-            if (window.windowLevel < UIWindowLevelNormal) continue;
-            UIView *hit = [window hitTest:tapPt withEvent:nil];
-            if (hit && hit != window && !hit.hidden && hit.userInteractionEnabled) {
-                targetView = hit;
-                gameWindow = window;
-                break;
+    @try {
+        if (!self.autoTapEnabled) return;
+        CGPoint tapPt = [self tapMarkerPosition];
+        if (tapPt.x <= 0 && tapPt.y <= 0) return;
+        
+        UIView *targetView = self.cachedTapTarget;
+        UIWindow *gameWindow = self.cachedGameWindow;
+        
+        // Refresh cache if stale
+        if (!targetView || targetView.hidden || !targetView.userInteractionEnabled || !gameWindow) {
+            for (UIWindow *window in [[UIApplication sharedApplication] windows]) {
+                if (window == self.overlayWindow || window.hidden) continue;
+                if (window.windowLevel < UIWindowLevelNormal) continue;
+                UIView *hit = [window hitTest:tapPt withEvent:nil];
+                if (hit && hit != window && !hit.hidden && hit.userInteractionEnabled) {
+                    targetView = hit;
+                    gameWindow = window;
+                    break;
+                }
             }
+            if (!targetView) {
+                UIWindow *w = [UIApplication sharedApplication].keyWindow;
+                targetView = [w hitTest:tapPt withEvent:nil];
+                gameWindow = w;
+            }
+            if (!targetView || targetView == gameWindow) return;
+            self.cachedTapTarget = targetView;
+            self.cachedGameWindow = gameWindow;
         }
-        if (!targetView) {
-            UIWindow *w = [UIApplication sharedApplication].keyWindow;
-            targetView = [w hitTest:tapPt withEvent:nil];
-            gameWindow = w;
-        }
-        if (!targetView || targetView == gameWindow) return;
-        self.cachedTapTarget = targetView;
-        self.cachedGameWindow = gameWindow;
+        
+        // Cache touch objects for performance
+        if (!self.emptyTouches) self.emptyTouches = [NSSet set];
+        if (!self.dummyEvent) self.dummyEvent = [[UIEvent alloc] init];
+        
+        [self performRealTapOnView:targetView inWindow:gameWindow atPoint:tapPt];
+        if (self.autoQueueEnabled) [self tapQueueButtonInView:targetView];
+        if (self.drawPredictionEnabled) [self drawPredictionFromPoint:tapPt inWindow:gameWindow];
+    } @catch (NSException *e) {
+        NSLog(@"[عبدالإله] tapRealTarget exception: %@", e);
     }
-    
-    // Cache touch objects for performance
-    if (!self.emptyTouches) self.emptyTouches = [NSSet set];
-    if (!self.dummyEvent) self.dummyEvent = [[UIEvent alloc] init];
-    
-    [self performRealTapOnView:targetView inWindow:gameWindow atPoint:tapPt];
-    if (self.autoQueueEnabled) [self tapQueueButtonInView:targetView];
-    if (self.drawPredictionEnabled) [self drawPredictionFromPoint:tapPt inWindow:gameWindow];
 }
 
 - (void)performRealTapOnView:(UIView *)targetView inWindow:(UIWindow *)gameWindow atPoint:(CGPoint)pt {
