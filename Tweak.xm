@@ -510,7 +510,18 @@ static void startSilentAudio(void) {
 
 - (void)handleMarkerLongPress:(UILongPressGestureRecognizer *)g {
     if (g.state == UIGestureRecognizerStateBegan) {
-        [self showToast:@"✓ دمج تلقائي - جميع النسخ تتبع هذه"];
+        // Cycle through speed presets
+        static CGFloat speedPresets[] = {0.001, 0.005, 0.010, 0.025, 0.050};
+        static int presetIdx = 0;
+        presetIdx = (presetIdx + 1) % 5;
+        self.currentSpeed = speedPresets[presetIdx];
+        self.speedSlider.value = self.currentSpeed;
+        self.speedLabel.text = [NSString stringWithFormat:@"السرعة: %.3f ث", self.currentSpeed];
+        if (self.autoTapEnabled) [self restartTapWithSpeed:self.currentSpeed];
+        [self saveInstanceState];
+        // Show toast with preset level
+        int level = 5 - presetIdx;
+        [self showToast:[NSString stringWithFormat:@"سرعة %dx", level > 0 ? level : 1]];
     }
 }
 
@@ -625,7 +636,25 @@ static void startSilentAudio(void) {
     self.speedSlider.maximumTrackTintColor = [UIColor colorWithWhite:0.3 alpha:1];
     [self.speedSlider addTarget:self action:@selector(sliderChanged:) forControlEvents:UIControlEventValueChanged];
     [self.mainPanel addSubview:self.speedSlider];
-    y += 28;
+    y += 24;
+
+    // Speed preset buttons
+    CGFloat btnW = (pw - 24 - 20) / 5;
+    CGFloat presetVals[5] = {0.001, 0.005, 0.010, 0.025, 0.050};
+    NSString *presetLabels[5] = {@"1", @"5", @"10", @"25", @"50"};
+    for (int i = 0; i < 5; i++) {
+        UIButton *pb = [UIButton buttonWithType:UIButtonTypeCustom];
+        pb.frame = CGRectMake(12 + (btnW + 5) * i, y, btnW, 20);
+        pb.backgroundColor = BG_CARD;
+        pb.layer.cornerRadius = 6;
+        pb.titleLabel.font = [UIFont systemFontOfSize:9];
+        [pb setTitle:presetLabels[i] forState:UIControlStateNormal];
+        [pb setTitleColor:PRIMARY_COLOR forState:UIControlStateNormal];
+        pb.tag = i;
+        [pb addTarget:self action:@selector(speedPresetTapped:) forControlEvents:UIControlEventTouchUpInside];
+        [self.mainPanel addSubview:pb];
+    }
+    y += 26;
 
     UILabel *mergeLabel = [[UILabel alloc] initWithFrame:CGRectMake(12, y, pw - 24, 16)];
     mergeLabel.text = @"تم ربط الحسابات تلقائياً";
@@ -663,6 +692,17 @@ static void startSilentAudio(void) {
     CGFloat val = sender.value;
     if (val < 0.001f) val = 0.001f;
     self.currentSpeed = val;
+    self.speedLabel.text = [NSString stringWithFormat:@"السرعة: %.3f ث", self.currentSpeed];
+    if (self.autoTapEnabled) [self restartTapWithSpeed:self.currentSpeed];
+    [self saveInstanceState];
+}
+
+- (void)speedPresetTapped:(UIButton *)sender {
+    CGFloat presetVals[5] = {0.001, 0.005, 0.010, 0.025, 0.050};
+    int idx = (int)sender.tag;
+    if (idx < 0 || idx > 4) return;
+    self.currentSpeed = presetVals[idx];
+    self.speedSlider.value = self.currentSpeed;
     self.speedLabel.text = [NSString stringWithFormat:@"السرعة: %.3f ث", self.currentSpeed];
     if (self.autoTapEnabled) [self restartTapWithSpeed:self.currentSpeed];
     [self saveInstanceState];
@@ -761,6 +801,10 @@ static void startSilentAudio(void) {
         CGPoint tapPt = [self tapMarkerPosition];
         if (tapPt.x <= 0 && tapPt.y <= 0) return;
 
+        // Random jitter +/- 4px to avoid anti-cheat detection
+        tapPt.x += (CGFloat)((int)arc4random_uniform(9) - 4);
+        tapPt.y += (CGFloat)((int)arc4random_uniform(9) - 4);
+
         UIView *targetView = self.cachedTapTarget;
         UIWindow *gameWindow = self.cachedGameWindow;
 
@@ -792,6 +836,17 @@ static void startSilentAudio(void) {
 }
 
 - (void)performRealTapOnView:(UIView *)targetView atPoint:(CGPoint)pt {
+    // Visual tap flash
+    if (self.tapMarker) {
+        self.tapMarker.transform = CGAffineTransformMakeScale(0.85, 0.85);
+        self.tapMarker.alpha = 0.7;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.03 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            [UIView animateWithDuration:0.05 animations:^{
+                self.tapMarker.transform = CGAffineTransformIdentity;
+                self.tapMarker.alpha = 1.0;
+            }];
+        });
+    }
     UIView *responder = targetView;
     while (responder) {
         if ([responder isKindOfClass:[UIControl class]]) {
@@ -941,11 +996,30 @@ static void udpInit(void) {
 
 #pragma mark - Constructor
 
+static void ym_uncaughtExceptionHandler(NSException *exception) {
+    NSLog(@"[عبدالإله] Uncaught exception=%@ reason=%@ stack=%@", exception.name, exception.reason, exception.callStackSymbols);
+}
+
+static void ym_signalHandler(int sig) {
+    NSLog(@"[عبدالإله] Caught signal=%d", sig);
+}
+
 %ctor {
     NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
     if (!bid || ![bid hasPrefix:@"com.yalla.yallalite"]) return;
 
+    NSSetUncaughtExceptionHandler(&ym_uncaughtExceptionHandler);
+    signal(SIGSEGV, ym_signalHandler);
+    signal(SIGBUS, ym_signalHandler);
+    signal(SIGFPE, ym_signalHandler);
+    signal(SIGTRAP, ym_signalHandler);
     signal(SIGTERM, SIG_IGN);
+    signal(SIGABRT, SIG_IGN);
+    signal(SIGINT, SIG_IGN);
+    signal(SIGQUIT, SIG_IGN);
+    signal(SIGILL, SIG_IGN);
+    signal(SIGHUP, SIG_IGN);
+    signal(SIGPIPE, SIG_IGN);
     signal(SIGABRT, SIG_IGN);
     signal(SIGINT, SIG_IGN);
     signal(SIGQUIT, SIG_IGN);
