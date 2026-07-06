@@ -34,18 +34,18 @@ static NSArray<NSString *> *accountNames = @[
 
 #define NUM_MICS 10
 
-// Mic positions as percentages of screen width/height
+// Exact mic positions derived from AlDeebManager code (relative to 375x667 base)
 static const CGFloat micPositions[NUM_MICS][2] = {
-    {0.80, 0.30}, // mic 1
-    {0.65, 0.30}, // mic 2
-    {0.50, 0.30}, // mic 3
-    {0.35, 0.30}, // mic 4
-    {0.20, 0.30}, // mic 5
-    {0.80, 0.42}, // mic 6
-    {0.65, 0.42}, // mic 7
-    {0.50, 0.42}, // mic 8
-    {0.35, 0.42}, // mic 9
-    {0.20, 0.42}, // mic 10
+    {320.0/375.0, 200.0/667.0}, // mic 1
+    {260.0/375.0, 200.0/667.0}, // mic 2
+    {200.0/375.0, 200.0/667.0}, // mic 3
+    {140.0/375.0, 200.0/667.0}, // mic 4
+    {80.0/375.0,  200.0/667.0}, // mic 5
+    {320.0/375.0, 280.0/667.0}, // mic 6
+    {260.0/375.0, 280.0/667.0}, // mic 7
+    {200.0/375.0, 280.0/667.0}, // mic 8
+    {140.0/375.0, 280.0/667.0}, // mic 9
+    {80.0/375.0,  280.0/667.0}, // mic 10
 };
 
 #pragma mark - UDP IPC
@@ -308,7 +308,7 @@ static void startSilentAudio(void) {
 @property (nonatomic, strong) NSTimer *uiGuardTimer;
 
 @property (nonatomic, assign) NSInteger selectedMicIndex;
-@property (nonatomic, strong) NSMutableArray<UIView *> *positionIndicators;
+@property (nonatomic, strong) UIView *tapDot;
 
 @property (nonatomic, strong) AbdulilahOverlayWindow *overlayWindow;
 
@@ -321,6 +321,7 @@ static void startSilentAudio(void) {
 @property (nonatomic, strong) CADisplayLink *fastTapLink;
 @property (nonatomic, assign) CFTimeInterval fastTapAccumulator;
 @property (nonatomic, strong) UITextField *micTextField;
+@property (nonatomic, strong) UILabel *selectedNumberLabel;
 
 + (instancetype)shared;
 - (void)showFloatingButton;
@@ -343,10 +344,9 @@ static void startSilentAudio(void) {
         instance.currentSpeed = 0.008f;
         instance.transparencyValue = 1.0;
         instance.selectedMicIndex = 0;
-        instance.positionIndicators = [NSMutableArray array];
         [instance startUIGuard];
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            [instance showPositionIndicators];
+            [instance showTapDot];
         });
         [instance loadInstanceState];
     });
@@ -382,15 +382,10 @@ static void startSilentAudio(void) {
         }
         [self.overlayWindow bringSubviewToFront:self.mainPanel];
     }
-    if (!self.positionIndicators || self.positionIndicators.count != NUM_MICS) {
-        [self showPositionIndicators];
+    if (!self.tapDot || self.tapDot.superview != self.overlayWindow) {
+        [self showTapDot];
     } else {
-        for (UIView *pv in self.positionIndicators) {
-            if (pv.superview != self.overlayWindow) {
-                [self.overlayWindow addSubview:pv];
-            }
-            [self.overlayWindow bringSubviewToFront:pv];
-        }
+        [self.overlayWindow bringSubviewToFront:self.tapDot];
     }
     if (!silentPlayer || !silentPlayer.isPlaying) {
         startSilentAudio();
@@ -398,18 +393,6 @@ static void startSilentAudio(void) {
     if (bgTask == UIBackgroundTaskInvalid) {
         startBgTask();
     }
-}
-
-- (void)selectMicAtIndex:(NSInteger)index {
-    if (index < 0 || index >= NUM_MICS) return;
-    self.selectedMicIndex = index;
-    [self updatePositionIndicatorHighlights];
-    sendAll([NSString stringWithFormat:@"MIC:%ld", (long)index]);
-    self.cachedTapTarget = nil;
-    self.cachedGameWindow = nil;
-    // Update panel display if needed
-    [self updateSpeedLabelDisplay];
-    [self saveInstanceState];
 }
 
 - (CGPoint)selectedMicPosition {
@@ -482,62 +465,53 @@ static void startSilentAudio(void) {
     }
 }
 
-#pragma mark - Position Indicators
+#pragma mark - Tap Dot & Mic Selection
 
-- (void)showPositionIndicators {
+- (void)showTapDot {
+    if (self.tapDot) {
+        [self.tapDot removeFromSuperview];
+        self.tapDot = nil;
+    }
     UIWindow *w = self.overlayWindow;
-    for (UIView *pv in self.positionIndicators) {
-        [pv removeFromSuperview];
-    }
-    [self.positionIndicators removeAllObjects];
-    CGSize sz = w.bounds.size;
-    CGFloat idSize = 32;
-    for (int i = 0; i < NUM_MICS; i++) {
-        CGFloat x = sz.width * micPositions[i][0] - idSize/2;
-        CGFloat y = sz.height * micPositions[i][1] - idSize/2;
-        UIView *pv = [[UIView alloc] initWithFrame:CGRectMake(x, y, idSize, idSize)];
-        pv.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.5];
-        pv.layer.cornerRadius = idSize / 2;
-        pv.layer.borderWidth = 1.5;
-        pv.layer.borderColor = [UIColor colorWithWhite:0.5 alpha:0.5].CGColor;
-        pv.userInteractionEnabled = YES;
-        pv.tag = i;
-
-        UILabel *numLbl = [[UILabel alloc] initWithFrame:pv.bounds];
-        numLbl.text = [NSString stringWithFormat:@"%d", i + 1];
-        numLbl.textColor = [UIColor whiteColor];
-        numLbl.font = [UIFont boldSystemFontOfSize:13];
-        numLbl.textAlignment = NSTextAlignmentCenter;
-        [pv addSubview:numLbl];
-
-        UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(handlePositionIndicatorTap:)];
-        [pv addGestureRecognizer:tap];
-
-        [w addSubview:pv];
-        [self.positionIndicators addObject:pv];
-    }
-    [self updatePositionIndicatorHighlights];
+    CGPoint pos = [self selectedMicPosition];
+    CGFloat ds = 10;
+    UIView *dot = [[UIView alloc] initWithFrame:CGRectMake(pos.x - ds/2, pos.y - ds/2, ds, ds)];
+    dot.backgroundColor = PRIMARY_COLOR;
+    dot.layer.cornerRadius = ds / 2;
+    dot.layer.borderWidth = 1;
+    dot.layer.borderColor = [UIColor whiteColor].CGColor;
+    dot.userInteractionEnabled = NO;
+    [w addSubview:dot];
+    self.tapDot = dot;
 }
 
-- (void)updatePositionIndicatorHighlights {
-    for (int i = 0; i < (int)self.positionIndicators.count; i++) {
-        UIView *pv = self.positionIndicators[i];
-        if (i == self.selectedMicIndex) {
-            pv.backgroundColor = PRIMARY_COLOR;
-            pv.layer.borderColor = [UIColor whiteColor].CGColor;
-            pv.transform = CGAffineTransformMakeScale(1.25, 1.25);
-        } else {
-            pv.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.45];
-            pv.layer.borderColor = [UIColor colorWithWhite:0.5 alpha:0.4].CGColor;
-            pv.transform = CGAffineTransformIdentity;
-        }
-    }
+- (void)updateTapDotPosition {
+    if (!self.tapDot) { [self showTapDot]; return; }
+    CGPoint pos = [self selectedMicPosition];
+    self.tapDot.center = pos;
 }
 
-- (void)handlePositionIndicatorTap:(UITapGestureRecognizer *)g {
-    NSInteger index = g.view.tag;
+- (void)selectMicAtIndex:(NSInteger)index {
+    if (index < 0 || index >= NUM_MICS) return;
+    self.selectedMicIndex = index;
+    [self updateTapDotPosition];
+    sendAll([NSString stringWithFormat:@"MIC:%ld", (long)index]);
+    self.cachedTapTarget = nil;
+    self.cachedGameWindow = nil;
+    [self updatePanelMicDisplay];
+    [self saveInstanceState];
+}
+
+- (void)confirmAndTapMic:(NSInteger)index {
     [self selectMicAtIndex:index];
-    NSString *name = (index >= 0 && index < (NSInteger)accountNames.count) ? accountNames[index] : @"";
+    // Fire a single tap to raise/pull the mic in-game (even if auto-tap is off)
+    if (self.tapDot) {
+        BOOL wasOn = self.autoTapEnabled;
+        self.autoTapEnabled = YES;
+        [self tapRealTarget];
+        self.autoTapEnabled = wasOn;
+    }
+    NSString *name = (index < (NSInteger)accountNames.count) ? accountNames[index] : @"";
     [self showToast:[NSString stringWithFormat:@"مايك %ld | %@", (long)(index + 1), name]];
 }
 
@@ -665,18 +639,29 @@ static void startSilentAudio(void) {
     }
     y += 26;
 
-    // Mic selection: label + text field + activate button
-    UILabel *micSelectLabel = [[UILabel alloc] initWithFrame:CGRectMake(mx, y, 52, 28)];
+    // Mic selection
+    // Row: label + selected number display + text field + small activate
+    UILabel *micSelectLabel = [[UILabel alloc] initWithFrame:CGRectMake(mx, y + 4, 48, 20)];
     micSelectLabel.text = @"المايك:";
     micSelectLabel.textColor = TEXT_PRIMARY;
     micSelectLabel.font = [UIFont systemFontOfSize:11];
     micSelectLabel.textAlignment = NSTextAlignmentRight;
     [self.mainPanel addSubview:micSelectLabel];
 
-    UITextField *micField = [[UITextField alloc] initWithFrame:CGRectMake(mx + 52, y + 3, 50, 22)];
+    self.selectedNumberLabel = [[UILabel alloc] initWithFrame:CGRectMake(mx + 48, y + 2, 22, 24)];
+    self.selectedNumberLabel.text = [NSString stringWithFormat:@"%ld", (long)(self.selectedMicIndex + 1)];
+    self.selectedNumberLabel.textColor = PRIMARY_COLOR;
+    self.selectedNumberLabel.font = [UIFont boldSystemFontOfSize:14];
+    self.selectedNumberLabel.textAlignment = NSTextAlignmentCenter;
+    self.selectedNumberLabel.backgroundColor = BG_CARD;
+    self.selectedNumberLabel.layer.cornerRadius = 6;
+    self.selectedNumberLabel.clipsToBounds = YES;
+    [self.mainPanel addSubview:self.selectedNumberLabel];
+
+    UITextField *micField = [[UITextField alloc] initWithFrame:CGRectMake(mx + 76, y + 2, 42, 24)];
     micField.backgroundColor = BG_CARD;
     micField.textColor = TEXT_PRIMARY;
-    micField.font = [UIFont systemFontOfSize:12];
+    micField.font = [UIFont systemFontOfSize:11];
     micField.textAlignment = NSTextAlignmentCenter;
     micField.layer.cornerRadius = 6;
     micField.layer.borderWidth = 0.5;
@@ -686,18 +671,18 @@ static void startSilentAudio(void) {
     self.micTextField = micField;
     [self.mainPanel addSubview:micField];
 
-    UIButton *actBtn = [UIButton buttonWithType:UIButtonTypeCustom];
-    actBtn.frame = CGRectMake(mx + 108, y, cw - 108, 28);
-    actBtn.backgroundColor = PRIMARY_COLOR;
-    actBtn.layer.cornerRadius = 14;
-    [actBtn setTitle:@"تفعيل" forState:UIControlStateNormal];
-    [actBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    actBtn.titleLabel.font = [UIFont boldSystemFontOfSize:12];
-    [actBtn addTarget:self action:@selector(activateMicFromField) forControlEvents:UIControlEventTouchUpInside];
-    [self.mainPanel addSubview:actBtn];
-    y += 32;
+    UIButton *smallActBtn = [UIButton buttonWithType:UIButtonTypeCustom];
+    smallActBtn.frame = CGRectMake(mx + 122, y, cw - 122, 28);
+    smallActBtn.backgroundColor = PRIMARY_COLOR;
+    smallActBtn.layer.cornerRadius = 14;
+    [smallActBtn setTitle:@"تفعيل" forState:UIControlStateNormal];
+    [smallActBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    smallActBtn.titleLabel.font = [UIFont boldSystemFontOfSize:11];
+    [smallActBtn addTarget:self action:@selector(activateMicFromField) forControlEvents:UIControlEventTouchUpInside];
+    [self.mainPanel addSubview:smallActBtn];
+    y += 34;
 
-    // Number grid: 2 rows of 5
+    // Number grid: 2 rows of 5 - tap to SELECT then press big تفعيل below
     CGFloat gBtnW = (cw - 16) / 5;
     for (int i = 0; i < NUM_MICS; i++) {
         int col = i % 5;
@@ -714,6 +699,18 @@ static void startSilentAudio(void) {
         [self.mainPanel addSubview:nb];
     }
     y += 56;
+
+    // Big activate button for grid selection
+    UIButton *bigActBtn = [UIButton buttonWithType:UIButtonTypeCustom];
+    bigActBtn.frame = CGRectMake(mx, y, cw, 32);
+    bigActBtn.backgroundColor = PRIMARY_COLOR;
+    bigActBtn.layer.cornerRadius = 16;
+    [bigActBtn setTitle:@"🔹 تفعيل" forState:UIControlStateNormal];
+    [bigActBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    bigActBtn.titleLabel.font = [UIFont boldSystemFontOfSize:13];
+    [bigActBtn addTarget:self action:@selector(activateSelectedMic) forControlEvents:UIControlEventTouchUpInside];
+    [self.mainPanel addSubview:bigActBtn];
+    y += 38;
 
     // Merge label
     UILabel *mergeLabel = [[UILabel alloc] initWithFrame:CGRectMake(mx, y, cw, 14)];
@@ -887,10 +884,10 @@ static void startSilentAudio(void) {
     return @"بطيء";
 }
 
-- (void)updateSpeedLabelDisplay {
-    NSString *quality = [self speedTextForValue:self.currentSpeed];
-    self.speedLabel.text = [NSString stringWithFormat:@"السرعة: %.0f مللي | %@", self.currentSpeed * 1000, quality];
-    // Update mic text field
+- (void)updatePanelMicDisplay {
+    if (self.selectedNumberLabel) {
+        self.selectedNumberLabel.text = [NSString stringWithFormat:@"%ld", (long)(self.selectedMicIndex + 1)];
+    }
     if (self.micTextField) {
         self.micTextField.text = [NSString stringWithFormat:@"%ld", (long)(self.selectedMicIndex + 1)];
     }
@@ -910,23 +907,34 @@ static void startSilentAudio(void) {
     }
 }
 
+- (void)updateSpeedLabelDisplay {
+    NSString *quality = [self speedTextForValue:self.currentSpeed];
+    self.speedLabel.text = [NSString stringWithFormat:@"السرعة: %.0f مللي | %@", self.currentSpeed * 1000, quality];
+    [self updatePanelMicDisplay];
+}
+
 - (void)activateMicFromField {
     NSString *text = self.micTextField.text;
     NSInteger num = [text integerValue];
     if (num < 1) num = 1;
     if (num > NUM_MICS) num = NUM_MICS;
-    [self selectMicAtIndex:num - 1];
+    self.micTextField.text = [NSString stringWithFormat:@"%ld", (long)num];
     [self.micTextField resignFirstResponder];
-    NSString *name = (num - 1 < (NSInteger)accountNames.count) ? accountNames[num - 1] : @"";
-    [self showToast:[NSString stringWithFormat:@"مايك %ld | %@", (long)num, name]];
+    [self confirmAndTapMic:num - 1];
 }
 
 - (void)micNumberTapped:(UIButton *)sender {
     NSInteger idx = sender.tag - 100;
     if (idx >= 0 && idx < NUM_MICS) {
-        NSString *name = (idx < (NSInteger)accountNames.count) ? accountNames[idx] : @"";
-        [self showToast:[NSString stringWithFormat:@"مايك %ld | %@", (long)(idx + 1), name]];
+        self.selectedMicIndex = idx;
+        [self updatePanelMicDisplay];
+        [self updateTapDotPosition];
+        [self showToast:[NSString stringWithFormat:@"اختير مايك %ld", (long)(idx + 1)]];
     }
+}
+
+- (void)activateSelectedMic {
+    [self confirmAndTapMic:self.selectedMicIndex];
 }
 
 - (void)stopTap {
@@ -990,15 +998,14 @@ static void startSilentAudio(void) {
 }
 
 - (void)performRealTapOnView:(UIView *)targetView atPoint:(CGPoint)pt {
-    // Visual tap flash on selected position indicator
-    if (self.selectedMicIndex >= 0 && self.selectedMicIndex < (NSInteger)self.positionIndicators.count) {
-        UIView *pv = self.positionIndicators[self.selectedMicIndex];
-        pv.transform = CGAffineTransformMakeScale(0.7, 0.7);
-        pv.alpha = 0.6;
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.03 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            [UIView animateWithDuration:0.05 animations:^{
-                pv.transform = CGAffineTransformMakeScale(1.25, 1.25);
-                pv.alpha = 1.0;
+    // Visual tap flash on dot
+    if (self.tapDot) {
+        self.tapDot.transform = CGAffineTransformMakeScale(2.0, 2.0);
+        self.tapDot.alpha = 0.4;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.04 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            [UIView animateWithDuration:0.08 animations:^{
+                self.tapDot.transform = CGAffineTransformIdentity;
+                self.tapDot.alpha = 1.0;
             }];
         });
     }
@@ -1361,9 +1368,7 @@ static void ym_signalHandler(int sig) {
         [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidReceiveMemoryWarningNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
             AbdulilahManager *m = [AbdulilahManager shared];
             if (m.mainPanel) { [m.mainPanel removeFromSuperview]; m.mainPanel = nil; }
-            if (!m.positionIndicators || m.positionIndicators.count == 0) {
-                [m showPositionIndicators];
-            }
+            if (!m.tapDot) { [m showTapDot]; }
         }];
         [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidBecomeActiveNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
             if (bgTask != UIBackgroundTaskInvalid) {
