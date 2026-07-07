@@ -520,6 +520,7 @@ static void startSilentAudio(void) {
 
 - (void)selectMicAtIndex:(NSInteger)index {
     if (index < 0 || index >= NUM_MICS) return;
+    if (self.selectedMicIndex == index) return;
     self.selectedMicIndex = index;
     sendAll([NSString stringWithFormat:@"MIC:%ld", (long)index]);
     self.cachedTapTarget = nil;
