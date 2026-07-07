@@ -1201,6 +1201,7 @@ static void udpInit(void) {
                             NSInteger idx = [parts[2] integerValue];
                             if (idx >= 0 && idx < NUM_MICS) {
                                 mgr.capturedPositions[@(idx)] = [NSValue valueWithCGPoint:CGPointMake(x, y)];
+                                [mgr saveInstanceState];
                             }
                         }
                     } else if ([m isEqualToString:@"RUN"]) {
