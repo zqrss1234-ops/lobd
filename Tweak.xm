@@ -291,7 +291,6 @@ static void startSilentAudio(void) {
 @property (nonatomic, strong) NSTimer *uiGuardTimer;
 
 @property (nonatomic, assign) NSInteger selectedMicIndex;
-@property (nonatomic, strong) UIView *tapDot;
 @property (nonatomic, assign) BOOL isCaptureMode;
 @property (nonatomic, strong) UIView *captureDot;
 @property (nonatomic, strong) NSMutableDictionary *capturedPositions;
@@ -331,9 +330,6 @@ static void startSilentAudio(void) {
         instance.isCaptureMode = NO;
         instance.capturedPositions = [NSMutableDictionary dictionary];
         [instance startUIGuard];
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            [instance showTapDot];
-        });
         [instance loadInstanceState];
     });
     return instance;
@@ -367,11 +363,6 @@ static void startSilentAudio(void) {
             [self.overlayWindow addSubview:self.mainPanel];
         }
         [self.overlayWindow bringSubviewToFront:self.mainPanel];
-    }
-    if (!self.tapDot || self.tapDot.superview != self.overlayWindow) {
-        if (!self.isCaptureMode) [self showTapDot];
-    } else {
-        [self.overlayWindow bringSubviewToFront:self.tapDot];
     }
     if (self.isCaptureMode && (!self.captureDot || self.captureDot.superview != self.overlayWindow)) {
         [self showCaptureDot];
@@ -464,30 +455,6 @@ static void startSilentAudio(void) {
     return CGPointMake(x, y);
 }
 
-- (void)showTapDot {
-    if (self.tapDot) {
-        [self.tapDot removeFromSuperview];
-        self.tapDot = nil;
-    }
-    UIWindow *w = self.overlayWindow;
-    CGPoint pos = [self positionForMic:self.selectedMicIndex];
-    CGFloat ds = 10;
-    UIView *dot = [[UIView alloc] initWithFrame:CGRectMake(pos.x - ds/2, pos.y - ds/2, ds, ds)];
-    dot.backgroundColor = PRIMARY_COLOR;
-    dot.layer.cornerRadius = ds / 2;
-    dot.layer.borderWidth = 1;
-    dot.layer.borderColor = [UIColor whiteColor].CGColor;
-    dot.userInteractionEnabled = NO;
-    [w addSubview:dot];
-    self.tapDot = dot;
-}
-
-- (void)updateTapDotPosition {
-    if (!self.tapDot) { [self showTapDot]; return; }
-    CGPoint pos = [self positionForMic:self.selectedMicIndex];
-    self.tapDot.center = pos;
-}
-
 #pragma mark - Capture Mode
 
 - (void)showCaptureDot {
@@ -541,12 +508,9 @@ static void startSilentAudio(void) {
 - (void)toggleCaptureMode {
     self.isCaptureMode = !self.isCaptureMode;
     if (self.isCaptureMode) {
-        if (self.tapDot) { self.tapDot.hidden = YES; }
         [self showCaptureDot];
     } else {
         [self hideCaptureDot];
-        if (self.tapDot) { self.tapDot.hidden = NO; }
-        [self updateTapDotPosition];
         [self saveInstanceState];
     }
     [self updatePanelMicDisplay];
@@ -557,7 +521,6 @@ static void startSilentAudio(void) {
 - (void)selectMicAtIndex:(NSInteger)index {
     if (index < 0 || index >= NUM_MICS) return;
     self.selectedMicIndex = index;
-    [self updateTapDotPosition];
     sendAll([NSString stringWithFormat:@"MIC:%ld", (long)index]);
     self.cachedTapTarget = nil;
     self.cachedGameWindow = nil;
@@ -1237,7 +1200,6 @@ static void udpInit(void) {
                             NSInteger idx = [parts[2] integerValue];
                             if (idx >= 0 && idx < NUM_MICS) {
                                 mgr.capturedPositions[@(idx)] = [NSValue valueWithCGPoint:CGPointMake(x, y)];
-                                if (idx == mgr.selectedMicIndex) [mgr updateTapDotPosition];
                             }
                         }
                     } else if ([m isEqualToString:@"RUN"]) {
@@ -1407,7 +1369,6 @@ static void ym_signalHandler(int sig) {
         [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidReceiveMemoryWarningNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
             AbdulilahManager *m = [AbdulilahManager shared];
             if (m.mainPanel) { [m.mainPanel removeFromSuperview]; m.mainPanel = nil; }
-            if (!m.tapDot) { [m showTapDot]; }
             if (m.isCaptureMode && !m.captureDot) { [m showCaptureDot]; }
         }];
         [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidBecomeActiveNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
