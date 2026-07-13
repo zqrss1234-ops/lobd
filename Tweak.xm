@@ -249,7 +249,7 @@ static void startSilentAudio(void) {
         if (silentPlayer && silentPlayer.isPlaying) return;
         AVAudioSession *session = [AVAudioSession sharedInstance];
         [session setCategory:AVAudioSessionCategoryPlayback withOptions:AVAudioSessionCategoryOptionMixWithOthers error:nil];
-        [session setActive:YES withOptions:AVAudioSessionSetActiveOptionNotifyOthersOnInterruption error:nil];
+        [session setActive:YES error:nil];
         int rate = 8000, dur = 60, ch = 1, bits = 16;
         int dataSz = rate * dur * ch * (bits / 8);
         int fileSz = 44 + dataSz;
