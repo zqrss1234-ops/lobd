@@ -319,6 +319,10 @@ static void startSilentAudio(void) {
 - (void)selectMicAtIndex:(NSInteger)index;
 - (void)startTap;
 - (void)stopTap;
+- (void)showToast:(NSString *)message;
+- (void)performMetaTouchDownAtPoint:(CGPoint)pt;
+- (void)performMetaTouchUpAtPoint:(CGPoint)pt;
+- (void)performHIDTapAtPoint:(CGPoint)pt;
 
 @end
 
@@ -1139,6 +1143,8 @@ static void hid_tap(CGPoint pt) {
 
 #pragma mark - Advanced Touch (PTFakeMetaTouch / UIPhysicalKeyboardEvent)
 
+@end
+
 @interface UITouch (FakePrivate)
 - (void)setView:(UIView *)v;
 - (void)setWindow:(UIWindow *)w;
@@ -1146,6 +1152,8 @@ static void hid_tap(CGPoint pt) {
 - (void)setTimestamp:(NSTimeInterval)t;
 - (void)setPhase:(UITouchPhase)p;
 @end
+
+@implementation AbdulilahManager
 
 - (void)performMetaTouchDownAtPoint:(CGPoint)pt {
     @try {
