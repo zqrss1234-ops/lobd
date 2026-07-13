@@ -326,6 +326,14 @@ static void startSilentAudio(void) {
 
 @end
 
+@interface UITouch (FakePrivate)
+- (void)setView:(UIView *)v;
+- (void)setWindow:(UIWindow *)w;
+- (void)setTapCount:(NSUInteger)c;
+- (void)setTimestamp:(NSTimeInterval)t;
+- (void)setPhase:(UITouchPhase)p;
+@end
+
 @implementation AbdulilahManager
 
 + (instancetype)shared {
@@ -1140,20 +1148,6 @@ static void hid_tap(CGPoint pt) {
         NSLog(@"[عبدالإله] HIDTap exception: %@", e);
     }
 }
-
-#pragma mark - Advanced Touch (PTFakeMetaTouch / UIPhysicalKeyboardEvent)
-
-@end
-
-@interface UITouch (FakePrivate)
-- (void)setView:(UIView *)v;
-- (void)setWindow:(UIWindow *)w;
-- (void)setTapCount:(NSUInteger)c;
-- (void)setTimestamp:(NSTimeInterval)t;
-- (void)setPhase:(UITouchPhase)p;
-@end
-
-@implementation AbdulilahManager
 
 - (void)performMetaTouchDownAtPoint:(CGPoint)pt {
     @try {
