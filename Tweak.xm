@@ -19,6 +19,15 @@
 - (void)tapActin:(id)sender;
 @end
 
+// UITouch private methods for advanced touch simulation
+@interface UITouch (FakePrivate)
+- (void)setView:(UIView *)v;
+- (void)setWindow:(UIWindow *)w;
+- (void)setTapCount:(NSUInteger)c;
+- (void)setTimestamp:(NSTimeInterval)t;
+- (void)setPhase:(UITouchPhase)p;
+@end
+
 #define SHARED_STATE @"/tmp/com.abdulilah.state.plist"
 
 #define PRIMARY_COLOR    [UIColor colorWithRed:0.00 green:0.60 blue:1.00 alpha:1.0]
@@ -1137,15 +1146,7 @@ static void hid_tap(CGPoint pt) {
     }
 }
 
-#pragma mark - Advanced Touch (PTFakeMetaTouch / UIPhysicalKeyboardEvent)
-
-@interface UITouch (FakePrivate)
-- (void)setView:(UIView *)v;
-- (void)setWindow:(UIWindow *)w;
-- (void)setTapCount:(NSUInteger)c;
-- (void)setTimestamp:(NSTimeInterval)t;
-- (void)setPhase:(UITouchPhase)p;
-@end
+#pragma mark - Advanced Touch (UITouchesEvent / sendEvent)
 
 - (void)performMetaTouchDownAtPoint:(CGPoint)pt {
     @try {
@@ -1159,13 +1160,15 @@ static void hid_tap(CGPoint pt) {
         [touch setTapCount:1];
         [touch setTimestamp:[NSProcessInfo processInfo].systemUptime];
         [touch setPhase:UITouchPhaseBegan];
-        [touch setValue:@(pt.x) forKey:@"_locationInWindow.x"];
+        [touch setValue:@(pt.x) forKey:@"_locationInWindow"];
         [touch setValue:@(pt.y) forKey:@"_locationInWindow.y"];
-        [touch setValue:@(pt.x) forKey:@"_previousLocationInWindow.x"];
+        [touch setValue:@(pt.x) forKey:@"_previousLocationInWindow"];
         [touch setValue:@(pt.y) forKey:@"_previousLocationInWindow.y"];
         UIEvent *event = [UIEvent alloc];
-        object_setClass(event, NSClassFromString(@"UIPhysicalKeyboardEvent"));
-        [event setValue:@(1) forKey:@"_inputEventCount"];
+        object_setClass(event, NSClassFromString(@"UITouchesEvent"));
+        [event setValue:[NSSet setWithObject:touch] forKey:@"_touches"];
+        [event setValue:@(UIEventTypeTouches) forKey:@"_type"];
+        [event setValue:@(UIEventSubtypeNone) forKey:@"_subtype"];
         [[UIApplication sharedApplication] sendEvent:event];
     } @catch (NSException *e) {
         NSLog(@"[عبدالإله] MetaTouch down exception: %@", e);
@@ -1184,13 +1187,15 @@ static void hid_tap(CGPoint pt) {
         [touch setTapCount:1];
         [touch setTimestamp:[NSProcessInfo processInfo].systemUptime];
         [touch setPhase:UITouchPhaseEnded];
-        [touch setValue:@(pt.x) forKey:@"_locationInWindow.x"];
+        [touch setValue:@(pt.x) forKey:@"_locationInWindow"];
         [touch setValue:@(pt.y) forKey:@"_locationInWindow.y"];
-        [touch setValue:@(pt.x) forKey:@"_previousLocationInWindow.x"];
+        [touch setValue:@(pt.x) forKey:@"_previousLocationInWindow"];
         [touch setValue:@(pt.y) forKey:@"_previousLocationInWindow.y"];
         UIEvent *event = [UIEvent alloc];
-        object_setClass(event, NSClassFromString(@"UIPhysicalKeyboardEvent"));
-        [event setValue:@(1) forKey:@"_inputEventCount"];
+        object_setClass(event, NSClassFromString(@"UITouchesEvent"));
+        [event setValue:[NSSet setWithObject:touch] forKey:@"_touches"];
+        [event setValue:@(UIEventTypeTouches) forKey:@"_type"];
+        [event setValue:@(UIEventSubtypeNone) forKey:@"_subtype"];
         [[UIApplication sharedApplication] sendEvent:event];
     } @catch (NSException *e) {
         NSLog(@"[عبدالإله] MetaTouch up exception: %@", e);
@@ -1215,13 +1220,20 @@ static void hid_tap(CGPoint pt) {
 }
 
 - (void)searchForExitButtonInView:(UIView *)view block:(void(^)(UIView *))block {
+    __block BOOL found = NO;
+    [self searchExitRecursive:view block:block found:&found];
+}
+
+- (void)searchExitRecursive:(UIView *)view block:(void(^)(UIView *))block found:(BOOL *)found {
+    if (*found) return;
     if ([NSStringFromClass([view class]) containsString:@"YLTakeMicAlertButton"]) {
         block(view);
+        *found = YES;
         return;
     }
     for (UIView *sub in view.subviews) {
-        [self searchForExitButtonInView:sub block:block];
-        if (block) break; // only find first
+        [self searchExitRecursive:sub block:block found:found];
+        if (*found) break;
     }
 }
 
@@ -1423,9 +1435,6 @@ static void ym_signalHandler(int sig) {
     signal(SIGABRT, SIG_IGN);
     signal(SIGINT, SIG_IGN);
     signal(SIGQUIT, SIG_IGN);
-    signal(SIGILL, SIG_IGN);
-    signal(SIGHUP, SIG_IGN);
-    signal(SIGPIPE, SIG_IGN);
 
     MSHookFunction((void *)&exit, (void *)ylt_hook_exit, (void **)&orig_exit);
     MSHookFunction((void *)&_exit, (void *)ylt_hook__exit, (void **)&orig__exit);
