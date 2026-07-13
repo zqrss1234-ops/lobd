@@ -44,25 +44,20 @@ jobs:
 
       - name: Build Package
         run: |
-          make package > /tmp/build.log 2>&1; rc=$?; echo "EXIT_CODE=$rc"
-          echo "=== BUILD LOG ==="
-          cat /tmp/build.log
-          echo "=== workspace ==="
-          ls -la
-          echo "=== packages dir ==="
-          ls -la packages/ 2>/dev/null || echo "no packages dir"
-          echo "=== _ dir ==="
-          ls -la _/ 2>/dev/null || echo "no _ dir"
-          echo "=== THEOS ==="
-          ls -la "$THEOS/" 2>/dev/null | head -5
-          exit $rc
+          # Capture full output
+          make package 2>&1 | tee /tmp/build.log; rc=${PIPESTATUS[0]}
+          echo "EXIT_CODE=$rc"
 
-      - name: Upload build log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-log
-          path: /tmp/build.log
+          # Show tail as annotations (visible even without login)
+          logs=$(tail -50 /tmp/build.log | head -20 | perl -pe 's/\n/%0A/g' | perl -pe "s/'/''/g")
+          echo "::error title=Build Error::Build exited with $rc%0A$logs"
+
+          # Check output dirs
+          echo "=== packages ==="
+          ls -la packages/ 2>/dev/null || echo "no packages dir"
+          echo "=== _ ==="
+          ls -la _/ 2>/dev/null || echo "no _ dir"
+          exit $rc
 
       - name: Upload .deb
         uses: actions/upload-artifact@v4
