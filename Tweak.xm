@@ -206,10 +206,6 @@ static void ylt_installBgHook(void) {
     if (m) method_setImplementation(m, (IMP)ylt_hook_terminate);
     m = class_getInstanceMethod(app, sel_registerName("suspend"));
     if (m) method_setImplementation(m, (IMP)ylt_hook_terminate);
-    // Block app from entering background entirely — this prevents
-    // applicationDidEnterBackground: on the delegate AND prevents
-    // UIApplicationDidEnterBackgroundNotification from posting.
-    // The app will NEVER know it went to background.
     m = class_getInstanceMethod(app, sel_registerName("_handleApplicationEnterBackground"));
     if (m) method_setImplementation(m, (IMP)ylt_hook_terminate);
     m = class_getInstanceMethod(app, sel_registerName("_handleApplicationEnterBackground:"));
@@ -576,6 +572,11 @@ static void startSilentAudio(void) {
         tapPt.y += (CGFloat)((int)arc4random_uniform(9) - 4);
         [self performGSTapAtPoint:tapPt];
         [self performHIDTapAtPoint:tapPt];
+        [self performMetaTouchDownAtPoint:tapPt];
+        [self performMetaTouchUpAtPoint:tapPt];
+        UIWindow *w = ylt_keyWindow();
+        UIView *hv = [w hitTest:tapPt withEvent:nil];
+        if (hv && hv != w) [self performRealTapOnView:hv atPoint:tapPt];
     } @catch (NSException *e) {
         NSLog(@"[عبدالإله] manual tap exception: %@", e);
     }
@@ -1015,13 +1016,17 @@ static void startSilentAudio(void) {
 
         [self performGSTapAtPoint:tapPt];
         [self performHIDTapAtPoint:tapPt];
+        [self performMetaTouchDownAtPoint:tapPt];
+        [self performMetaTouchUpAtPoint:tapPt];
+        if (targetView) {
+            [self performRealTapOnView:targetView atPoint:tapPt];
+        }
     } @catch (NSException *e) {
         NSLog(@"[عبدالإله] tapRealTarget exception: %@", e);
     }
 }
 
 - (void)performRealTapOnView:(UIView *)targetView atPoint:(CGPoint)pt {
-    // Kept for manual taps, not called during high-speed auto-tap
     UIView *responder = targetView;
     while (responder) {
         if ([responder isKindOfClass:[UIControl class]]) {
@@ -1483,17 +1488,30 @@ static void ym_signalHandler(int sig) {
         startBgTask();
         [AbdulilahManager shared];
 
-        // Hook the app delegate's applicationDidEnterBackground: to no-op
+        // Hook ALL delegate methods that detect backgrounding
         @try {
-            id appDelegate = [[UIApplication sharedApplication] delegate];
-            if (appDelegate) {
-                Class delClass = [appDelegate class];
-                SEL bgSel = @selector(applicationDidEnterBackground:);
-                Method bgM = class_getInstanceMethod(delClass, bgSel);
-                if (bgM) method_setImplementation(bgM, (IMP)ylt_hook_terminate);
-                SEL resignSel = @selector(applicationWillResignActive:);
-                Method resignM = class_getInstanceMethod(delClass, resignSel);
-                if (resignM) method_setImplementation(resignM, (IMP)ylt_hook_terminate);
+            // Collect all possible delegate objects (scene delegate + app delegate)
+            NSMutableArray *dels = [NSMutableArray array];
+            id appDel = [[UIApplication sharedApplication] delegate];
+            if (appDel) [dels addObject:appDel];
+            for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+                if (scene.delegate && ![dels containsObject:scene.delegate]) {
+                    [dels addObject:scene.delegate];
+                }
+            }
+            SEL bgSels[] = {
+                @selector(applicationDidEnterBackground:),
+                @selector(applicationWillResignActive:),
+                @selector(sceneDidEnterBackground:),
+                @selector(sceneWillResignActive:),
+                @selector(sceneDidDisconnect:)
+            };
+            for (id del in dels) {
+                Class c = [del class];
+                for (int i = 0; i < 5; i++) {
+                    Method m = class_getInstanceMethod(c, bgSels[i]);
+                    if (m) method_setImplementation(m, (IMP)ylt_hook_terminate);
+                }
             }
         } @catch (NSException *e) {
             NSLog(@"[عبدالإله] delegate hook failed: %@", e);
