@@ -16,11 +16,24 @@ jobs:
           git clone --recursive https://github.com/theos/theos.git $HOME/theos
           echo "THEOS=$HOME/theos" >> $GITHUB_ENV
 
-      - name: Install ldid
-        run: brew install ldid
+      - name: Install tools
+        run: |
+          brew install ldid dpkg 2>&1 || true
+          which ldid && ldid 2>&1 || echo "ldid not found"
+          which dpkg-deb && dpkg-deb --version || echo "dpkg-deb not found"
+          xcodebuild -version
+          clang --version | head -1
+
+      - name: Debug Theos
+        run: |
+          echo "THEOS=$THEOS"
+          ls -la $THEOS/makefiles/
+          ls -la $THEOS/vendor/
+          make --version | head -1
 
       - name: Build Package
-        run: make package
+        run: |
+          make package 2>&1
 
       - name: Upload .deb
         uses: actions/upload-artifact@v4
