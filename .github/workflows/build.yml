@@ -20,16 +20,18 @@ jobs:
         run: brew install ldid
 
       - name: Build Package
-        run: make package
+        run: |
+          make package 2>&1 | tee /tmp/build_output.txt; exit ${PIPESTATUS[0]}
 
       - name: Show build output
         if: failure()
         run: |
-          ls -la .theos/ 2>/dev/null || true
-          find . -name "*.log" -type f 2>/dev/null | while read f; do echo "=== LOG: $f ==="; cat "$f"; done
-          find . -name "*.o" -type f 2>/dev/null | head -5
-          echo "=== ENV ==="
-          env | grep -i theos
+          echo "=== BUILD OUTPUT ==="
+          cat /tmp/build_output.txt 2>/dev/null || echo "No build output file"
+          echo "=== THEOS LOGS ==="
+          find $HOME/theos -name "*.log" -type f 2>/dev/null | while read f; do echo "--- $f ---"; cat "$f"; done
+          echo "=== CURRENT DIR ==="
+          find . -name "*.log" -type f 2>/dev/null | while read f; do echo "--- $f ---"; cat "$f"; done
 
       - name: Upload .deb
         uses: actions/upload-artifact@v4
