@@ -14,7 +14,6 @@
 #import <sys/stat.h>
 #import <errno.h>
 
-// YallaLite private class for bus exit
 @interface YLTakeMicAlertButton : UIView
 - (void)tapActin:(id)sender;
 @end
@@ -26,17 +25,6 @@ static inline UIWindow *ylt_keyWindow(void) {
         }
     }
     return nil;
-}
-
-static BOOL IsIOS11OrLater(void) {
-    static BOOL isIOS11 = NO;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        NSString *systemVersion = [[UIDevice currentDevice] systemVersion];
-        NSArray *parts = [systemVersion componentsSeparatedByString:@"."];
-        if (parts.count > 0) isIOS11 = ([parts[0] integerValue] >= 11);
-    });
-    return isIOS11;
 }
 
 #define SHARED_STATE @"/tmp/com.abdulilah.state.plist"
@@ -51,34 +39,19 @@ static BOOL IsIOS11OrLater(void) {
 
 #define RGBA(r,g,b,a)    [UIColor colorWithRed:r/255.0 green:g/255.0 blue:b/255.0 alpha:a]
 
-#define NUM_MICS 15
+#define NUM_MICS 10
 
-#define MIC_ACTIVE       [UIColor colorWithRed:0.00 green:0.80 blue:1.00 alpha:1.0]
-#define MIC_INACTIVE     [UIColor colorWithRed:0.30 green:0.30 blue:0.35 alpha:1.0]
-
-#define REMOVE_LOCK_ACTIVE   [UIColor colorWithRed:0.00 green:0.85 blue:0.40 alpha:1.0]
-#define REMOVE_LOCK_INACTIVE [UIColor colorWithRed:1.00 green:0.20 blue:0.30 alpha:1.0]
-
-#define HIDE_CAPTURE_ACTIVE   [UIColor colorWithRed:1.00 green:0.50 blue:0.00 alpha:1.0]
-#define HIDE_CAPTURE_INACTIVE [UIColor colorWithRed:0.30 green:0.30 blue:0.35 alpha:1.0]
-
-// Mic positions based on 375x812 reference (iPhone X) from AlDeebManager
 static const CGFloat micPositions[NUM_MICS][2] = {
-    {320.0/375.0, 200.0/812.0}, // mic 1
-    {260.0/375.0, 200.0/812.0}, // mic 2
-    {200.0/375.0, 200.0/812.0}, // mic 3
-    {140.0/375.0, 200.0/812.0}, // mic 4
-    {80.0/375.0,  200.0/812.0}, // mic 5
-    {320.0/375.0, 280.0/812.0}, // mic 6
-    {260.0/375.0, 280.0/812.0}, // mic 7
-    {200.0/375.0, 280.0/812.0}, // mic 8
-    {140.0/375.0, 280.0/812.0}, // mic 9
-    {80.0/375.0,  280.0/812.0}, // mic 10
-    {20.0/375.0,  280.0/812.0}, // mic 11
-    {320.0/375.0, 360.0/812.0}, // mic 12
-    {260.0/375.0, 360.0/812.0}, // mic 13
-    {200.0/375.0, 360.0/812.0}, // mic 14
-    {140.0/375.0, 360.0/812.0}, // mic 15
+    {320.0/375.0, 200.0/812.0},
+    {260.0/375.0, 200.0/812.0},
+    {200.0/375.0, 200.0/812.0},
+    {140.0/375.0, 200.0/812.0},
+    {80.0/375.0,  200.0/812.0},
+    {20.0/375.0,  200.0/812.0},
+    {320.0/375.0, 280.0/812.0},
+    {260.0/375.0, 280.0/812.0},
+    {200.0/375.0, 280.0/812.0},
+    {140.0/375.0, 280.0/812.0},
 };
 
 #pragma mark - UDP IPC
@@ -161,10 +134,6 @@ static FILE *ylt_hook_fopen(const char *path, const char *mode) {
     if (path && strstr(path, "YLTool")) { errno = ENOENT; return NULL; }
     return orig_fopen(path, mode);
 }
-
-#pragma mark - NSFileManager Anti-Detection
-
-#pragma mark - Alert Blocker (Kick/Ban) — handled via Logos hooks below
 
 #pragma mark - Background Task
 
@@ -329,20 +298,6 @@ static void startSilentAudio(void) {
 
 @property (nonatomic, assign) NSInteger selectedMicIndex;
 @property (nonatomic, assign) BOOL isCaptureMode;
-
-@property (nonatomic, strong) UIButton *removeLockButton;
-@property (nonatomic, assign) BOOL isRemoveLockActive;
-@property (nonatomic, strong) UIButton *hideCaptureButton;
-@property (nonatomic, assign) BOOL isHideCaptureActive;
-
-@property (nonatomic, strong) UIButton *autoQueueButton;
-@property (nonatomic, strong) UIButton *goldenShotButton;
-@property (nonatomic, strong) UIButton *drawPredictionButton;
-@property (nonatomic, strong) UIButton *freezeLinesButton;
-@property (nonatomic, assign) BOOL isAutoQueueActive;
-@property (nonatomic, assign) BOOL isGoldenShotActive;
-@property (nonatomic, assign) BOOL isDrawPredictionActive;
-@property (nonatomic, assign) BOOL isFreezeLinesActive;
 @property (nonatomic, strong) UIView *captureDot;
 @property (nonatomic, strong) NSMutableDictionary *capturedPositions;
 
@@ -368,21 +323,6 @@ static void startSilentAudio(void) {
 - (void)showToast:(NSString *)message;
 - (void)performMetaTouchDownAtPoint:(CGPoint)pt;
 - (void)performMetaTouchUpAtPoint:(CGPoint)pt;
-- (void)performHIDTapAtPoint:(CGPoint)pt;
-- (void)setupScreenCaptureObserver;
-- (void)screenCaptureChanged:(NSNotification *)n;
-- (void)screenshotTaken:(NSNotification *)n;
-- (void)setUIHiddenFromCapture:(BOOL)hidden;
-- (void)toggleRemoveLock:(UIButton *)sender;
-- (void)updateRemoveLockButton;
-- (void)toggleHideCapture:(UIButton *)sender;
-- (void)updateHideCaptureButton;
-- (UIButton *)createFeatureButton:(NSString *)title tag:(NSInteger)tag frame:(CGRect)frame;
-- (BOOL)isFeatureActiveForTag:(NSInteger)tag;
-- (UIColor *)featureColorForTag:(NSInteger)tag active:(BOOL)active;
-- (void)styleFeatureButton:(UIButton *)button;
-- (void)updateFeatureButtons;
-- (void)toggleFeatureSwitch:(UIButton *)sender;
 
 @end
 
@@ -406,13 +346,6 @@ static void startSilentAudio(void) {
         instance.selectedMicIndex = 0;
         instance.isCaptureMode = NO;
         instance.capturedPositions = [NSMutableDictionary dictionary];
-        instance.isRemoveLockActive = NO;
-        instance.isHideCaptureActive = NO;
-        instance.isAutoQueueActive = NO;
-        instance.isGoldenShotActive = NO;
-        instance.isDrawPredictionActive = NO;
-        instance.isFreezeLinesActive = NO;
-        [instance setupScreenCaptureObserver];
         [instance startUIGuard];
         [instance loadInstanceState];
     });
@@ -459,7 +392,6 @@ static void startSilentAudio(void) {
     if (bgTask == UIBackgroundTaskInvalid) {
         startBgTask();
     }
-    // Heartbeat: broadcast full state every ~25s to keep all instances in sync
     static int hb = 0; hb++;
     if (hb % 5 == 0) {
         sendAll([NSString stringWithFormat:@"SYNC:%ld,%d,%.3f",
@@ -537,10 +469,8 @@ static void startSilentAudio(void) {
 #pragma mark - Tap Dot & Mic Selection
 
 - (CGPoint)positionForMic:(NSInteger)index {
-    // Check calibrated position first
     NSValue *val = self.capturedPositions[@(index)];
     if (val) return [val CGPointValue];
-    // Fall back to default percentage-based position
     CGSize sz = [UIScreen mainScreen].bounds.size;
     CGFloat x = sz.width * micPositions[index][0];
     CGFloat y = sz.height * micPositions[index][1];
@@ -628,13 +558,11 @@ static void startSilentAudio(void) {
         if (tapPt.x <= 0 || tapPt.y <= 0) return;
         tapPt.x += (CGFloat)((int)arc4random_uniform(9) - 4);
         tapPt.y += (CGFloat)((int)arc4random_uniform(9) - 4);
-        // Use KVC-based UITouch simulation (safe on iOS 14+)
         [self performMetaTouchDownAtPoint:tapPt];
         [self performMetaTouchUpAtPoint:tapPt];
         UIWindow *w = ylt_keyWindow();
         UIView *hv = [w hitTest:tapPt withEvent:nil];
         if (hv && hv != w) [self performRealTapOnView:hv atPoint:tapPt];
-        // GSEvent / IOHIDEvent أزيلت — تسبب كراش على iOS 14+
     } @catch (NSException *e) {
         NSLog(@"[عبدالإله] manual tap exception: %@", e);
     }
@@ -648,13 +576,6 @@ static void startSilentAudio(void) {
     dict[@"micIdx"] = @(self.selectedMicIndex);
     dict[@"tapOn"] = @(self.autoTapEnabled);
     dict[@"speed"] = @(self.currentSpeed);
-    dict[@"removeLockActive"] = @(self.isRemoveLockActive);
-    dict[@"hideCaptureActive"] = @(self.isHideCaptureActive);
-    dict[@"autoQueueActive"] = @(self.isAutoQueueActive);
-    dict[@"goldenShotActive"] = @(self.isGoldenShotActive);
-    dict[@"drawPredictionActive"] = @(self.isDrawPredictionActive);
-    dict[@"freezeLinesActive"] = @(self.isFreezeLinesActive);
-    // Save calibrated positions
     if (self.capturedPositions.count > 0) {
         NSMutableDictionary *posDict = [NSMutableDictionary dictionary];
         for (NSNumber *key in self.capturedPositions) {
@@ -676,7 +597,6 @@ static void startSilentAudio(void) {
             self.selectedMicIndex = idx;
         }
     }
-    // Load calibrated positions
     NSDictionary *cal = dict[@"calibrated"];
     if (cal) {
         [self.capturedPositions removeAllObjects];
@@ -698,18 +618,6 @@ static void startSilentAudio(void) {
     } else if (!shouldTap && self.autoTapEnabled) {
         [self stopTap];
     }
-    NSNumber *rl = dict[@"removeLockActive"];
-    if (rl) self.isRemoveLockActive = [rl boolValue];
-    NSNumber *hc = dict[@"hideCaptureActive"];
-    if (hc) self.isHideCaptureActive = [hc boolValue];
-    NSNumber *aq = dict[@"autoQueueActive"];
-    if (aq) self.isAutoQueueActive = [aq boolValue];
-    NSNumber *gs = dict[@"goldenShotActive"];
-    if (gs) self.isGoldenShotActive = [gs boolValue];
-    NSNumber *dp = dict[@"drawPredictionActive"];
-    if (dp) self.isDrawPredictionActive = [dp boolValue];
-    NSNumber *fl = dict[@"freezeLinesActive"];
-    if (fl) self.isFreezeLinesActive = [fl boolValue];
 }
 
 #pragma mark - Main Panel
@@ -717,7 +625,7 @@ static void startSilentAudio(void) {
 - (void)buildMainPanel {
     if (self.mainPanel) return;
     UIWindow *w = self.overlayWindow;
-    CGFloat pw = 240;
+    CGFloat pw = 220;
     CGFloat px = (w.bounds.size.width - pw) / 2;
     CGFloat py = 60;
     self.mainPanel = [[UIView alloc] initWithFrame:CGRectMake(px, py, pw, 190)];
@@ -753,28 +661,25 @@ static void startSilentAudio(void) {
     CGFloat mx = 12;
     CGFloat cw = pw - 24;
 
-    // Toggle button
     self.toggleBtn = [UIButton buttonWithType:UIButtonTypeCustom];
-    self.toggleBtn.frame = CGRectMake(mx, y, cw, 34);
+    self.toggleBtn.frame = CGRectMake(mx, y, cw, 38);
     self.toggleBtn.backgroundColor = SUCCESS_COLOR;
-    self.toggleBtn.layer.cornerRadius = 17;
+    self.toggleBtn.layer.cornerRadius = 19;
     [self.toggleBtn setTitle:@"تشغيل" forState:UIControlStateNormal];
     [self.toggleBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    self.toggleBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
+    self.toggleBtn.titleLabel.font = [UIFont boldSystemFontOfSize:15];
     [self.toggleBtn addTarget:self action:@selector(toggleStartStop) forControlEvents:UIControlEventTouchUpInside];
     [self.mainPanel addSubview:self.toggleBtn];
-    y += 38;
+    y += 44;
 
-    // Speed label
-    self.speedLabel = [[UILabel alloc] initWithFrame:CGRectMake(mx, y, cw, 14)];
+    self.speedLabel = [[UILabel alloc] initWithFrame:CGRectMake(mx, y, cw, 16)];
     self.speedLabel.textColor = TEXT_PRIMARY;
     self.speedLabel.font = [UIFont systemFontOfSize:10];
     [self.mainPanel addSubview:self.speedLabel];
     [self updateSpeedLabelDisplay];
     y += 18;
 
-    // Speed slider
-    self.speedSlider = [[UISlider alloc] initWithFrame:CGRectMake(mx, y, cw, 18)];
+    self.speedSlider = [[UISlider alloc] initWithFrame:CGRectMake(mx, y, cw, 20)];
     self.speedSlider.minimumValue = 0.001f;
     self.speedSlider.maximumValue = 0.1f;
     self.speedSlider.value = self.currentSpeed;
@@ -783,14 +688,13 @@ static void startSilentAudio(void) {
     self.speedSlider.maximumTrackTintColor = [UIColor colorWithWhite:0.3 alpha:1];
     [self.speedSlider addTarget:self action:@selector(sliderChanged:) forControlEvents:UIControlEventValueChanged];
     [self.mainPanel addSubview:self.speedSlider];
-    y += 22;
+    y += 24;
 
-    // Speed preset buttons
     CGFloat btnW = (cw - 20) / 5;
     NSString *presetLabels[5] = {@"1", @"5", @"10", @"25", @"50"};
     for (int i = 0; i < 5; i++) {
         UIButton *pb = [UIButton buttonWithType:UIButtonTypeCustom];
-        pb.frame = CGRectMake(mx + (btnW + 5) * i, y, btnW, 18);
+        pb.frame = CGRectMake(mx + (btnW + 5) * i, y, btnW, 20);
         pb.backgroundColor = BG_CARD;
         pb.layer.cornerRadius = 6;
         pb.titleLabel.font = [UIFont systemFontOfSize:9];
@@ -800,40 +704,8 @@ static void startSilentAudio(void) {
         [pb addTarget:self action:@selector(speedPresetTapped:) forControlEvents:UIControlEventTouchUpInside];
         [self.mainPanel addSubview:pb];
     }
-    y += 22;
+    y += 26;
 
-    // Remove Lock + Hide Capture row
-    UIView *toggleBox = [[UIView alloc] initWithFrame:CGRectMake(mx, y, cw, 28)];
-    toggleBox.backgroundColor = BG_CARD;
-    toggleBox.layer.cornerRadius = 10;
-    toggleBox.layer.borderWidth = 1;
-    toggleBox.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.05].CGColor;
-    [self.mainPanel addSubview:toggleBox];
-
-    self.removeLockButton = [UIButton buttonWithType:UIButtonTypeCustom];
-    self.removeLockButton.frame = CGRectMake(4, 3, (cw - 16) / 2, 22);
-    self.removeLockButton.layer.cornerRadius = 11;
-    self.removeLockButton.clipsToBounds = YES;
-    self.removeLockButton.layer.borderWidth = 1.2;
-    self.removeLockButton.layer.borderColor = [UIColor whiteColor].CGColor;
-    self.removeLockButton.titleLabel.font = [UIFont boldSystemFontOfSize:9];
-    [self.removeLockButton addTarget:self action:@selector(toggleRemoveLock:) forControlEvents:UIControlEventTouchUpInside];
-    [toggleBox addSubview:self.removeLockButton];
-    [self updateRemoveLockButton];
-
-    self.hideCaptureButton = [UIButton buttonWithType:UIButtonTypeCustom];
-    self.hideCaptureButton.frame = CGRectMake(4 + (cw - 16) / 2 + 8, 3, (cw - 16) / 2, 22);
-    self.hideCaptureButton.layer.cornerRadius = 11;
-    self.hideCaptureButton.clipsToBounds = YES;
-    self.hideCaptureButton.layer.borderWidth = 1.2;
-    self.hideCaptureButton.layer.borderColor = [UIColor whiteColor].CGColor;
-    self.hideCaptureButton.titleLabel.font = [UIFont boldSystemFontOfSize:9];
-    [self.hideCaptureButton addTarget:self action:@selector(toggleHideCapture:) forControlEvents:UIControlEventTouchUpInside];
-    [toggleBox addSubview:self.hideCaptureButton];
-    [self updateHideCaptureButton];
-    y += 32;
-
-    // Mic number grid: 3 rows of 5 - tap directly fires tap (or saves in capture mode)
     UILabel *micLabel = [[UILabel alloc] initWithFrame:CGRectMake(mx, y, cw, 14)];
     micLabel.text = @"اختيار المايك:";
     micLabel.textColor = TEXT_PRIMARY;
@@ -856,36 +728,8 @@ static void startSilentAudio(void) {
         [nb addTarget:self action:@selector(micNumberTapped:) forControlEvents:UIControlEventTouchUpInside];
         [self.mainPanel addSubview:nb];
     }
-    y += 84;
+    y += 56;
 
-    // Feature switches (2x2)
-    UIView *featBox = [[UIView alloc] initWithFrame:CGRectMake(mx, y, cw, 58)];
-    featBox.backgroundColor = BG_CARD;
-    featBox.layer.cornerRadius = 10;
-    featBox.layer.borderWidth = 1;
-    featBox.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.05].CGColor;
-    [self.mainPanel addSubview:featBox];
-
-    UILabel *featTitle = [[UILabel alloc] initWithFrame:CGRectMake(8, 4, cw - 16, 13)];
-    featTitle.text = @"⚙️ ميزات";
-    featTitle.textColor = TEXT_PRIMARY;
-    featTitle.font = [UIFont boldSystemFontOfSize:9];
-    [featBox addSubview:featTitle];
-
-    CGFloat fw = (cw - 20) / 2;
-    CGFloat fh = 18;
-    self.autoQueueButton = [self createFeatureButton:@"ازلة الصدمة" tag:1 frame:CGRectMake(6, 20, fw, fh)];
-    [featBox addSubview:self.autoQueueButton];
-    self.goldenShotButton = [self createFeatureButton:@"فاست اكس" tag:2 frame:CGRectMake(6 + fw + 8, 20, fw, fh)];
-    [featBox addSubview:self.goldenShotButton];
-    self.drawPredictionButton = [self createFeatureButton:@"تقوية الشقه" tag:3 frame:CGRectMake(6, 20 + fh + 4, fw, fh)];
-    [featBox addSubview:self.drawPredictionButton];
-    self.freezeLinesButton = [self createFeatureButton:@"تقوية تدبيل" tag:4 frame:CGRectMake(6 + fw + 8, 20 + fh + 4, fw, fh)];
-    [featBox addSubview:self.freezeLinesButton];
-    [self updateFeatureButtons];
-    y += 62;
-
-    // Capture mode toggle
     UIButton *captBtn = [UIButton buttonWithType:UIButtonTypeCustom];
     captBtn.frame = CGRectMake(mx, y, cw, 28);
     captBtn.backgroundColor = self.isCaptureMode ? [UIColor orangeColor] : BG_CARD;
@@ -898,7 +742,6 @@ static void startSilentAudio(void) {
     [self.mainPanel addSubview:captBtn];
     y += 34;
 
-    // Merge label
     UILabel *mergeLabel = [[UILabel alloc] initWithFrame:CGRectMake(mx, y, cw, 14)];
     mergeLabel.text = @"تم ربط الحسابات تلقائياً";
     mergeLabel.textColor = [UIColor greenColor];
@@ -907,7 +750,6 @@ static void startSilentAudio(void) {
     [self.mainPanel addSubview:mergeLabel];
     y += 18;
 
-    // Credit
     UIView *creditBox = [[UIView alloc] initWithFrame:CGRectMake(mx, y, cw, 24)];
     creditBox.backgroundColor = BG_CARD;
     creditBox.layer.cornerRadius = 12;
@@ -1002,7 +844,6 @@ static void startSilentAudio(void) {
     [self stopTapTimer];
     [self stopFastTapLink];
     self.tapGeneration++;
-    // Always use CADisplayLink — caps max rate at display refresh (60–120 fps)
     [self startFastTapLinkWithSpeed:speed];
 }
 
@@ -1057,7 +898,6 @@ static void startSilentAudio(void) {
 }
 
 - (void)updatePanelMicDisplay {
-    // Update number grid buttons in panel (tags 100-114)
     if (self.mainPanel) {
         for (UIView *sub in self.mainPanel.subviews) {
             if ([sub isKindOfClass:[UIButton class]] && sub.tag >= 100) {
@@ -1069,12 +909,10 @@ static void startSilentAudio(void) {
                     [btn setTitleColor:active ? [UIColor whiteColor] : PRIMARY_COLOR forState:UIControlStateNormal];
                 }
             }
-            // Update capture button (tag 200)
             if ([sub isKindOfClass:[UIButton class]] && sub.tag == 200) {
                 UIButton *cb = (UIButton *)sub;
                 cb.backgroundColor = self.isCaptureMode ? [UIColor orangeColor] : BG_CARD;
                 [cb setTitleColor:self.isCaptureMode ? [UIColor whiteColor] : [UIColor orangeColor] forState:UIControlStateNormal];
-                [cb setTitle:self.isCaptureMode ? @"📍 تصوير الموقع" : @"📍 تصوير الموقع" forState:UIControlStateNormal];
             }
         }
     }
@@ -1119,8 +957,6 @@ static void startSilentAudio(void) {
         if (!self.autoTapEnabled) return;
         CGPoint tapPt = [self selectedMicPosition];
         if (tapPt.x <= 0 || tapPt.y <= 0) return;
-
-        // Random jitter +/- 4px to avoid anti-cheat detection
         tapPt.x += (CGFloat)((int)arc4random_uniform(9) - 4);
         tapPt.y += (CGFloat)((int)arc4random_uniform(9) - 4);
 
@@ -1161,148 +997,70 @@ static void startSilentAudio(void) {
 - (void)performRealTapOnView:(UIView *)targetView atPoint:(CGPoint)pt {
     UIView *responder = targetView;
     while (responder) {
+        if ([responder respondsToSelector:@selector(tapActin:)]) {
+            [responder performSelector:@selector(tapActin:) withObject:nil];
+            return;
+        }
         if ([responder isKindOfClass:[UIControl class]]) {
             UIControl *ctrl = (UIControl *)responder;
-            [ctrl sendActionsForControlEvents:UIControlEventTouchDown];
             [ctrl sendActionsForControlEvents:UIControlEventTouchUpInside];
-            break;
+            return;
         }
         responder = (UIView *)[responder nextResponder];
     }
 }
 
-#pragma mark - GSEvent Tap (System-level touch)
-
-typedef struct __GSEvent *GSEventRef;
-static GSEventRef (*gs_CreateWithType)(int);
-static void (*gs_SetLocationInWindow)(GSEventRef, CGPoint);
-static void (*gs_PostEvent)(GSEventRef);
-
-static dispatch_once_t gs_once;
-#define GS_DOWN 1007
-#define GS_UP 1009
-
-static void gs_init(void) {
-    dispatch_once(&gs_once, ^{
-        void *h = dlopen("/System/Library/PrivateFrameworks/GraphicsServices.framework/GraphicsServices", RTLD_LAZY);
-        if (h) {
-            *(void **)&gs_CreateWithType = dlsym(h, "GSEventCreateWithType");
-            *(void **)&gs_SetLocationInWindow = dlsym(h, "GSEventSetLocationInWindow");
-            *(void **)&gs_PostEvent = dlsym(h, "GSEventPostEvent");
-        }
-    });
-}
-
-static void gs_tap(CGPoint pt) {
-    if (!gs_CreateWithType || !gs_SetLocationInWindow || !gs_PostEvent) return;
-    GSEventRef down = gs_CreateWithType(GS_DOWN);
-    if (down) {
-        gs_SetLocationInWindow(down, pt);
-        gs_PostEvent(down);
-    }
-    GSEventRef up = gs_CreateWithType(GS_UP);
-    if (up) {
-        gs_SetLocationInWindow(up, pt);
-        gs_PostEvent(up);
-    }
-}
-
-- (void)performGSTapAtPoint:(CGPoint)pt {
+- (UITouch *)createTouchAtPoint:(CGPoint)pt phase:(UITouchPhase)phase {
+    UIWindow *win = ylt_keyWindow();
+    if (!win) return nil;
+    UIView *hitView = [win hitTest:pt withEvent:nil];
+    if (!hitView) return nil;
+    UITouch *touch = [[UITouch alloc] init];
+    [touch setView:hitView];
+    [touch setWindow:win];
+    [touch setTapCount:1];
+    [touch setTimestamp:[NSProcessInfo processInfo].systemUptime];
+    [touch setPhase:phase];
     @try {
-        gs_init();
-        gs_tap(pt);
+        [touch setValue:[NSValue valueWithCGPoint:pt] forKey:@"_locationInWindow"];
+        [touch setValue:[NSValue valueWithCGPoint:pt] forKey:@"_previousLocationInWindow"];
     } @catch (NSException *e) {
-        NSLog(@"[عبدالإله] GSTap exception: %@", e);
+        @try {
+            [touch setValue:[NSValue valueWithCGPoint:pt] forKey:@"locationInWindow"];
+        } @catch (NSException *e2) {}
     }
+    return touch;
 }
 
-#pragma mark - IOHIDEvent Tap (Kernel-level touch)
-
-typedef struct __IOHIDEvent *IOHIDEventRef;
-typedef uint32_t IOHIDDigitizerTransducerType;
-typedef uint32_t IOHIDEventField;
-typedef double IOHIDFloat;
-
-static IOHIDEventRef (*hid_CreateDigitizerEvent)(CFAllocatorRef, uint64_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, IOHIDFloat, IOHIDFloat, IOHIDFloat, IOHIDFloat, IOHIDFloat, Boolean, Boolean, uint32_t);
-static IOHIDEventRef (*hid_CreateFingerEvent)(CFAllocatorRef, uint64_t, uint32_t, uint32_t, uint32_t, IOHIDFloat, IOHIDFloat, IOHIDFloat, IOHIDFloat, IOHIDFloat, IOHIDFloat, IOHIDFloat, IOHIDFloat, IOHIDFloat, IOHIDFloat, Boolean, Boolean, uint32_t);
-static void (*hid_AppendEvent)(IOHIDEventRef, IOHIDEventRef);
-static void (*hid_SetIntegerValue)(IOHIDEventRef, uint32_t, int);
-static void (*hid_PostEvent)(IOHIDEventRef);
-
-static dispatch_once_t hid_once;
-
-static void hid_init(void) {
-    dispatch_once(&hid_once, ^{
-        void *h = dlopen("/System/Library/Frameworks/IOKit.framework/IOKit", RTLD_LAZY);
-        if (!h) h = dlopen("/System/Library/PrivateFrameworks/IOMobileFramebuffer.framework/IOMobileFramebuffer", RTLD_LAZY);
-        if (h) {
-            *(void **)&hid_CreateDigitizerEvent = dlsym(h, "IOHIDEventCreateDigitizerEvent");
-            *(void **)&hid_CreateFingerEvent = dlsym(h, "IOHIDEventCreateDigitizerFingerEventWithQuality");
-            *(void **)&hid_AppendEvent = dlsym(h, "IOHIDEventAppendEvent");
-            *(void **)&hid_SetIntegerValue = dlsym(h, "IOHIDEventSetIntegerValue");
-            *(void **)&hid_PostEvent = dlsym(h, "IOHIDEventPostEvent");
-        }
-    });
-}
-
-static void hid_tap(CGPoint pt) {
-    if (!hid_CreateDigitizerEvent || !hid_CreateFingerEvent || !hid_AppendEvent || !hid_SetIntegerValue || !hid_PostEvent)
-        return;
-    uint64_t now = mach_absolute_time();
-    // Create hand event
-    IOHIDEventRef hand = hid_CreateDigitizerEvent(kCFAllocatorDefault, now, 3, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 1, 0);
-    if (!hand) return;
-    hid_SetIntegerValue(hand, 0x00E0001, 1);
-    // Create finger down
-    IOHIDEventRef down = hid_CreateFingerEvent(kCFAllocatorDefault, now, 1, 2, 3, (IOHIDFloat)pt.x, (IOHIDFloat)pt.y, 0, 0, 0, 5, 5, 1, 1, 1, 1, 1, 0);
-    if (down) {
-        hid_SetIntegerValue(down, 0x00E0001, 1);
-        hid_AppendEvent(hand, down);
-        hid_PostEvent(hand);
-        CFRelease(down);
-    }
-    if (hand) CFRelease(hand);
-    // Create finger up
-    hand = hid_CreateDigitizerEvent(kCFAllocatorDefault, now, 3, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 1, 0);
-    if (hand) {
-        hid_SetIntegerValue(hand, 0x00E0001, 1);
-        IOHIDEventRef up = hid_CreateFingerEvent(kCFAllocatorDefault, now, 1, 2, 2, (IOHIDFloat)pt.x, (IOHIDFloat)pt.y, 0, 0, 0, 5, 5, 1, 1, 1, 0, 0, 0);
-        if (up) {
-            hid_SetIntegerValue(up, 0x00E0001, 1);
-            hid_AppendEvent(hand, up);
-            hid_PostEvent(hand);
-            CFRelease(up);
-        }
-        CFRelease(hand);
-    }
-}
-
-- (void)performHIDTapAtPoint:(CGPoint)pt {
+- (void)dispatchTouch:(UITouch *)touch {
+    if (!touch) return;
+    UIEvent *event = [[UIEvent alloc] init];
     @try {
-        hid_init();
-        hid_tap(pt);
+        [event setValue:[NSSet setWithObject:touch] forKey:@"_touches"];
     } @catch (NSException *e) {
-        NSLog(@"[عبدالإله] HIDTap exception: %@", e);
+        @try {
+            [event setValue:[NSSet setWithObject:touch] forKey:@"touches"];
+        } @catch (NSException *e2) {}
+    }
+    UIView *hitView = [touch valueForKey:@"view"];
+    if (!hitView) hitView = [touch view];
+    if (!hitView) return;
+    UITouchPhase phase = touch.phase;
+    @try {
+        [[UIApplication sharedApplication] sendEvent:event];
+    } @catch (NSException *e) {
+        if (phase == UITouchPhaseBegan)
+            [hitView touchesBegan:[NSSet setWithObject:touch] withEvent:event];
+        else if (phase == UITouchPhaseEnded)
+            [hitView touchesEnded:[NSSet setWithObject:touch] withEvent:event];
     }
 }
 
 - (void)performMetaTouchDownAtPoint:(CGPoint)pt {
     @try {
-        UIWindow *win = ylt_keyWindow();
-        if (!win) return;
-        UIView *hitView = [win hitTest:pt withEvent:nil];
-        if (!hitView) return;
-        UITouch *touch = [[UITouch alloc] init];
-        [touch setView:hitView];
-        [touch setWindow:win];
-        [touch setTapCount:1];
-        [touch setTimestamp:[NSProcessInfo processInfo].systemUptime];
-        [touch setPhase:UITouchPhaseBegan];
-        [touch setValue:[NSValue valueWithCGPoint:pt] forKey:@"_locationInWindow"];
-        [touch setValue:[NSValue valueWithCGPoint:pt] forKey:@"_previousLocationInWindow"];
-        UIEvent *event = [[UIEvent alloc] init];
-        [event setValue:[NSSet setWithObject:touch] forKey:@"_touches"];
-        [hitView touchesBegan:[NSSet setWithObject:touch] withEvent:event];
+        UITouch *touch = [self createTouchAtPoint:pt phase:UITouchPhaseBegan];
+        if (!touch) return;
+        [self dispatchTouch:touch];
     } @catch (NSException *e) {
         NSLog(@"[عبدالإله] MetaTouch down exception: %@", e);
     }
@@ -1310,21 +1068,9 @@ static void hid_tap(CGPoint pt) {
 
 - (void)performMetaTouchUpAtPoint:(CGPoint)pt {
     @try {
-        UIWindow *win = ylt_keyWindow();
-        if (!win) return;
-        UIView *hitView = [win hitTest:pt withEvent:nil];
-        if (!hitView) return;
-        UITouch *touch = [[UITouch alloc] init];
-        [touch setView:hitView];
-        [touch setWindow:win];
-        [touch setTapCount:1];
-        [touch setTimestamp:[NSProcessInfo processInfo].systemUptime];
-        [touch setPhase:UITouchPhaseEnded];
-        [touch setValue:[NSValue valueWithCGPoint:pt] forKey:@"_locationInWindow"];
-        [touch setValue:[NSValue valueWithCGPoint:pt] forKey:@"_previousLocationInWindow"];
-        UIEvent *event = [[UIEvent alloc] init];
-        [event setValue:[NSSet setWithObject:touch] forKey:@"_touches"];
-        [hitView touchesEnded:[NSSet setWithObject:touch] withEvent:event];
+        UITouch *touch = [self createTouchAtPoint:pt phase:UITouchPhaseEnded];
+        if (!touch) return;
+        [self dispatchTouch:touch];
     } @catch (NSException *e) {
         NSLog(@"[عبدالإله] MetaTouch up exception: %@", e);
     }
@@ -1334,12 +1080,11 @@ static void hid_tap(CGPoint pt) {
 
 - (void)tryBusExit {
     @try {
-        // Find YLTakeMicAlertButton in view hierarchy and call tapActin:
         UIWindow *win = ylt_keyWindow();
         if (!win) return;
         __block UIView *exitBtn = nil;
-        [self searchForExitButtonInView:win block:^(UIView *v) { exitBtn = v; }];
-        if (exitBtn && [exitBtn respondsToSelector:@selector(tapActin:)]) {
+        [self searchForViewRespondingToSelector:@selector(tapActin:) inView:win block:^(UIView *v) { exitBtn = v; }];
+        if (exitBtn) {
             [exitBtn performSelector:@selector(tapActin:) withObject:nil];
         }
     } @catch (NSException *e) {
@@ -1347,13 +1092,13 @@ static void hid_tap(CGPoint pt) {
     }
 }
 
-- (void)searchForExitButtonInView:(UIView *)view block:(void(^)(UIView *))block {
-    if ([NSStringFromClass([view class]) containsString:@"YLTakeMicAlertButton"]) {
+- (void)searchForViewRespondingToSelector:(SEL)sel inView:(UIView *)view block:(void(^)(UIView *))block {
+    if ([view respondsToSelector:sel]) {
         block(view);
         return;
     }
     for (UIView *sub in view.subviews) {
-        [self searchForExitButtonInView:sub block:block];
+        [self searchForViewRespondingToSelector:sel inView:sub block:block];
     }
 }
 
@@ -1393,160 +1138,9 @@ static void hid_tap(CGPoint pt) {
     }];
 }
 
-#pragma mark - Remove Lock
-
-- (void)toggleRemoveLock:(UIButton *)sender {
-    self.isRemoveLockActive = !self.isRemoveLockActive;
-    [self saveInstanceState];
-    [self updateRemoveLockButton];
-    [self showToast:self.isRemoveLockActive ? @"🔓 Remove Lock ON" : @"🔒 Remove Lock OFF"];
-}
-
-- (void)updateRemoveLockButton {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        if (!self.removeLockButton) return;
-        if (self.isRemoveLockActive) {
-            self.removeLockButton.backgroundColor = REMOVE_LOCK_ACTIVE;
-            [self.removeLockButton setTitle:@"🔓 ON" forState:UIControlStateNormal];
-        } else {
-            self.removeLockButton.backgroundColor = REMOVE_LOCK_INACTIVE;
-            [self.removeLockButton setTitle:@"🔒 OFF" forState:UIControlStateNormal];
-        }
-    });
-}
-
-#pragma mark - Hide on Capture
-
-- (void)setupScreenCaptureObserver {
-    NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
-    if (IsIOS11OrLater()) {
-        [nc addObserver:self selector:@selector(screenCaptureChanged:) name:@"UIScreenCapturedDidChangeNotification" object:nil];
-    }
-    [nc addObserver:self selector:@selector(screenshotTaken:) name:UIApplicationUserDidTakeScreenshotNotification object:nil];
-}
-
-- (void)screenCaptureChanged:(NSNotification *)n {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        if (!self.isHideCaptureActive) return;
-        BOOL isCaptured = NO;
-        @try {
-            if (IsIOS11OrLater()) {
-                NSNumber *v = [[UIScreen mainScreen] valueForKey:@"captured"];
-                if (v) isCaptured = [v boolValue];
-            }
-        } @catch (NSException *e) {}
-        [self setUIHiddenFromCapture:isCaptured];
-    });
-}
-
-- (void)screenshotTaken:(NSNotification *)n {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        if (self.isHideCaptureActive) {
-            [self setUIHiddenFromCapture:YES];
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                [self setUIHiddenFromCapture:NO];
-            });
-        }
-    });
-}
-
-- (void)setUIHiddenFromCapture:(BOOL)hidden {
-    self.mainPanel.hidden = hidden;
-    self.floatButton.hidden = hidden;
-    NSLog(@"[عبدالإله] UI %@ from capture", hidden ? @"HIDDEN" : @"SHOWN");
-}
-
-- (void)toggleHideCapture:(UIButton *)sender {
-    self.isHideCaptureActive = !self.isHideCaptureActive;
-    [self saveInstanceState];
-    [self updateHideCaptureButton];
-    [self showToast:self.isHideCaptureActive ? @"📵 Hide ON" : @"📷 Hide OFF"];
-}
-
-- (void)updateHideCaptureButton {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        if (!self.hideCaptureButton) return;
-        if (self.isHideCaptureActive) {
-            self.hideCaptureButton.backgroundColor = HIDE_CAPTURE_ACTIVE;
-            [self.hideCaptureButton setTitle:@"📵 ON" forState:UIControlStateNormal];
-        } else {
-            self.hideCaptureButton.backgroundColor = HIDE_CAPTURE_INACTIVE;
-            [self.hideCaptureButton setTitle:@"📷 OFF" forState:UIControlStateNormal];
-        }
-    });
-}
-
-#pragma mark - Feature Switches
-
-- (UIButton *)createFeatureButton:(NSString *)title tag:(NSInteger)tag frame:(CGRect)frame {
-    UIButton *b = [UIButton buttonWithType:UIButtonTypeCustom];
-    b.frame = frame;
-    b.tag = tag;
-    b.layer.cornerRadius = 8;
-    b.clipsToBounds = YES;
-    b.layer.borderWidth = 1.2;
-    b.titleLabel.font = [UIFont boldSystemFontOfSize:9];
-    b.titleLabel.adjustsFontSizeToFitWidth = YES;
-    b.titleLabel.minimumScaleFactor = 0.7;
-    [b setTitle:title forState:UIControlStateNormal];
-    [b setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    [b addTarget:self action:@selector(toggleFeatureSwitch:) forControlEvents:UIControlEventTouchUpInside];
-    return b;
-}
-
-- (BOOL)isFeatureActiveForTag:(NSInteger)tag {
-    switch (tag) {
-        case 1: return self.isAutoQueueActive;
-        case 2: return self.isGoldenShotActive;
-        case 3: return self.isDrawPredictionActive;
-        case 4: return self.isFreezeLinesActive;
-        default: return NO;
-    }
-}
-
-- (UIColor *)featureColorForTag:(NSInteger)tag active:(BOOL)active {
-    if (!active) return MIC_INACTIVE;
-    switch (tag) {
-        case 1: return [UIColor colorWithRed:0.0 green:0.7 blue:0.3 alpha:1.0];
-        case 2: return [UIColor colorWithRed:0.9 green:0.7 blue:0.0 alpha:1.0];
-        case 3: return [UIColor colorWithRed:0.0 green:0.5 blue:1.0 alpha:1.0];
-        case 4: return [UIColor colorWithRed:0.5 green:0.3 blue:0.8 alpha:1.0];
-        default: return PRIMARY_COLOR;
-    }
-}
-
-- (void)styleFeatureButton:(UIButton *)button {
-    if (!button) return;
-    BOOL active = [self isFeatureActiveForTag:button.tag];
-    UIColor *color = [self featureColorForTag:button.tag active:active];
-    button.backgroundColor = color;
-    button.layer.borderColor = active ? color.CGColor : [UIColor colorWithWhite:0.3 alpha:0.3].CGColor;
-}
-
-- (void)updateFeatureButtons {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        [self styleFeatureButton:self.autoQueueButton];
-        [self styleFeatureButton:self.goldenShotButton];
-        [self styleFeatureButton:self.drawPredictionButton];
-        [self styleFeatureButton:self.freezeLinesButton];
-    });
-}
-
-- (void)toggleFeatureSwitch:(UIButton *)sender {
-    switch (sender.tag) {
-        case 1: self.isAutoQueueActive = !self.isAutoQueueActive; break;
-        case 2: self.isGoldenShotActive = !self.isGoldenShotActive; break;
-        case 3: self.isDrawPredictionActive = !self.isDrawPredictionActive; break;
-        case 4: self.isFreezeLinesActive = !self.isFreezeLinesActive; break;
-        default: return;
-    }
-    [self saveInstanceState];
-    [self updateFeatureButtons];
-}
-
 @end
 
-#pragma mark - UDP Init (must be after AbdulilahManager for class visibility)
+#pragma mark - UDP Init
 
 static void udpInit(void) {
     udpSock = socket(AF_INET, SOCK_DGRAM, 0);
@@ -1661,29 +1255,6 @@ static void udpInit(void) {
 
 %end
 
-#pragma mark - MBProgressHUD Hook (Remove Lock)
-
-%hook MBProgressHUD
-
-- (void)hideAnimated:(bool)arg1 {
-    AbdulilahManager *mgr = [AbdulilahManager shared];
-    if (mgr.isRemoveLockActive) {
-        arg1 = NO;
-    }
-    %orig(arg1);
-}
-
-- (void)hideAnimated:(bool)arg1 afterDelay:(double)arg2 {
-    AbdulilahManager *mgr = [AbdulilahManager shared];
-    if (mgr.isRemoveLockActive) {
-        arg1 = NO;
-        arg2 = 0;
-    }
-    %orig(arg1, arg2);
-}
-
-%end
-
 #pragma mark - YLTakeMicAlertButton Hook (Bus Exit Tracking)
 
 %hook _TtCC9YLRoomKit18YLTakeMicAlertViewP33_097D67C9E65CE05B568646FBC61B24A86Button
@@ -1787,13 +1358,12 @@ static void ym_signalHandler(int sig) {
         startBgTask();
         [AbdulilahManager shared];
 
-        // Hook ALL delegate methods that detect backgrounding
         @try {
-            // Collect all possible delegate objects (scene delegate + app delegate)
             NSMutableArray *dels = [NSMutableArray array];
             id appDel = [[UIApplication sharedApplication] delegate];
             if (appDel) [dels addObject:appDel];
-            for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+            NSSet *scenes = [[UIApplication sharedApplication].connectedScenes copy];
+            for (UIScene *scene in scenes) {
                 if (scene.delegate && ![dels containsObject:scene.delegate]) {
                     [dels addObject:scene.delegate];
                 }
@@ -1816,7 +1386,6 @@ static void ym_signalHandler(int sig) {
             NSLog(@"[عبدالإله] delegate hook failed: %@", e);
         }
 
-        // Background watchdog: check every 2s that audio + bg task are alive, restart if dead
         dispatch_source_t watchdog = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
         dispatch_source_set_timer(watchdog, dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC), 2 * NSEC_PER_SEC, 1 * NSEC_PER_SEC);
         dispatch_source_set_event_handler(watchdog, ^{
@@ -1827,7 +1396,6 @@ static void ym_signalHandler(int sig) {
             if (bgTask == UIBackgroundTaskInvalid) {
                 startBgTask();
             }
-            // Keep audio session active
             [[AVAudioSession sharedInstance] setActive:YES error:nil];
         });
         dispatch_resume(watchdog);
@@ -1836,7 +1404,7 @@ static void ym_signalHandler(int sig) {
             AbdulilahManager *m = [AbdulilahManager shared];
             if (m.mainPanel) { [m.mainPanel removeFromSuperview]; m.mainPanel = nil; }
             if (m.floatButton) { [m.floatButton.superview removeFromSuperview]; m.floatButton = nil; }
-            if (m.isCaptureMode && !m.captureDot) { [m showCaptureDot]; }
+            if (m.isCaptureMode) { [m showCaptureDot]; }
         }];
         [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidBecomeActiveNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
             if (bgTask != UIBackgroundTaskInvalid) {
@@ -1856,6 +1424,6 @@ static void ym_signalHandler(int sig) {
         }];
     });
 
-    NSLog(@"[عبدالإله] Tweak v3.1 loaded — 15 mics, remove lock, hide capture, feature switches");
+    NSLog(@"[عبدالإله] Tweak v3.2 loaded — 10 mics, sendEvent: MetaTouch, robust tap routing");
     });
 }
