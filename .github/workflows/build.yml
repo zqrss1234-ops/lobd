@@ -44,9 +44,25 @@ jobs:
 
       - name: Build Package
         run: |
-          make package > /tmp/build.log 2>&1 || echo "BUILD FAILED with exit code $?"
+          make package > /tmp/build.log 2>&1; rc=$?; echo "EXIT_CODE=$rc"
           echo "=== BUILD LOG ==="
           cat /tmp/build.log
+          echo "=== workspace ==="
+          ls -la
+          echo "=== packages dir ==="
+          ls -la packages/ 2>/dev/null || echo "no packages dir"
+          echo "=== _ dir ==="
+          ls -la _/ 2>/dev/null || echo "no _ dir"
+          echo "=== THEOS ==="
+          ls -la "$THEOS/" 2>/dev/null | head -5
+          exit $rc
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: /tmp/build.log
 
       - name: Upload .deb
         uses: actions/upload-artifact@v4
