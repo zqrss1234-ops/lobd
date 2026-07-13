@@ -628,13 +628,13 @@ static void startSilentAudio(void) {
         if (tapPt.x <= 0 || tapPt.y <= 0) return;
         tapPt.x += (CGFloat)((int)arc4random_uniform(9) - 4);
         tapPt.y += (CGFloat)((int)arc4random_uniform(9) - 4);
-        [self performGSTapAtPoint:tapPt];
-        [self performHIDTapAtPoint:tapPt];
+        // Use KVC-based UITouch simulation (safe on iOS 14+)
         [self performMetaTouchDownAtPoint:tapPt];
         [self performMetaTouchUpAtPoint:tapPt];
         UIWindow *w = ylt_keyWindow();
         UIView *hv = [w hitTest:tapPt withEvent:nil];
         if (hv && hv != w) [self performRealTapOnView:hv atPoint:tapPt];
+        // GSEvent / IOHIDEvent أزيلت — تسبب كراش على iOS 14+
     } @catch (NSException *e) {
         NSLog(@"[عبدالإله] manual tap exception: %@", e);
     }
@@ -1148,8 +1148,6 @@ static void startSilentAudio(void) {
             self.cachedGameWindow = gameWindow;
         }
 
-        [self performGSTapAtPoint:tapPt];
-        [self performHIDTapAtPoint:tapPt];
         [self performMetaTouchDownAtPoint:tapPt];
         [self performMetaTouchUpAtPoint:tapPt];
         if (targetView) {
@@ -1362,10 +1360,7 @@ static void hid_tap(CGPoint pt) {
 - (void)triggerMicExit {
     @try {
         [self tryBusExit];
-        // Fallback: tap at bus position
         CGPoint tapPt = [self positionForMic:self.selectedMicIndex];
-        [self performGSTapAtPoint:tapPt];
-        [self performHIDTapAtPoint:tapPt];
         [self performMetaTouchDownAtPoint:tapPt];
         [self performMetaTouchUpAtPoint:tapPt];
     } @catch (NSException *e) {
