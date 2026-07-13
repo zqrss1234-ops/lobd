@@ -315,7 +315,7 @@ static void startSilentAudio(void) {
 @property (nonatomic, weak) UIWindow *cachedGameWindow;
 @property (nonatomic, assign) NSUInteger tapGeneration;
 @property (nonatomic, strong) NSObject *tapTimerLock;
-@property (nonatomic, strong) dispatch_source_t tapTimer;
+@property (nonatomic, assign) dispatch_source_t tapTimer;
 
 @property (nonatomic, strong) CADisplayLink *fastTapLink;
 @property (nonatomic, assign) CFTimeInterval fastTapAccumulator;
