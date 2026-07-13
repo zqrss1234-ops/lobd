@@ -66,6 +66,8 @@ static int myPort = 0;
 static void udpInit(void);
 static void udpSend(NSString *msg);
 static void sendAll(NSString *msg);
+static UIWindow *ylt_keyWindow(void);
+static void startSilentAudio(void);
 
 #pragma mark - Anti-Termination Hooks
 
@@ -182,8 +184,6 @@ static void startBgTaskRenewal(void) {
 static BOOL ylt_hook_isBacEnabled(id self, SEL _cmd) { return NO; }
 static NSInteger ylt_hook_appState(id self, SEL _cmd) { return 0; }
 static void ylt_hook_terminate(id self, SEL _cmd) {}
-
-static void startSilentAudio(void);
 
 static void ylt_installBgHook(void) {
     Class app = objc_getClass("UIApplication");
