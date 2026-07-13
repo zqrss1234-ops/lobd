@@ -17,12 +17,21 @@ jobs:
           echo "THEOS=$HOME/theos" >> $GITHUB_ENV
 
       - name: Install dependencies
-        run: brew install ldid dpkg 2>&1 || true
+        run: |
+          export HOMEBREW_NO_REQUIRE_TAP_TRUST=1
+          brew install ldid dpkg 2>&1 || true
 
       - name: Build Package
-        run: make package
+        run: |
+          make package 2>&1 | tee /tmp/build.log; rc=${PIPESTATUS[0]}
+          logs=$(tail -30 /tmp/build.log | perl -pe 's/\n/%0A/g' | perl -pe "s/'/''/g")
+          echo "::error title=Build Error::exit $rc%0A$logs"
+          ls -la packages/ 2>/dev/null || echo "no packages"
+          ls -la _/ 2>/dev/null || echo "no _"
+          exit $rc
 
       - name: Upload .deb
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: deb-package
