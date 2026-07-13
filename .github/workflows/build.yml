@@ -28,13 +28,25 @@ jobs:
         run: |
           echo "HOME=$HOME"
           echo "THEOS=$THEOS"
-          ls -la "$THEOS/makefiles/" || echo "No makefiles dir at $THEOS/makefiles/"
-          ls -la "$THEOS/vendor/" || echo "No vendor dir at $THEOS/vendor/"
+          echo "GITHUB_ENV=$GITHUB_ENV"
+          test -n "$THEOS" && echo "THEOS is set" || echo "THEOS is EMPTY"
+          ls -la "$THEOS/" || echo "No THEOS dir"
+          ls -la "$THEOS/makefiles/" || echo "No makefiles dir"
+          ls -la "$THEOS/vendor/" || echo "No vendor dir"
           which make
           make --version
+          which clang
+          which xcodebuild
+          xcodebuild -version 2>&1
+          which ldid
+          which dpkg-deb
+          echo "---end debug---"
 
       - name: Build Package
-        run: make package 2>&1
+        run: |
+          make package > /tmp/build.log 2>&1 || echo "BUILD FAILED with exit code $?"
+          echo "=== BUILD LOG ==="
+          cat /tmp/build.log
 
       - name: Upload .deb
         uses: actions/upload-artifact@v4
