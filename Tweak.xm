@@ -14,6 +14,11 @@
 #import <sys/stat.h>
 #import <errno.h>
 
+// YallaLite private class for bus exit
+@interface YLTakeMicAlertButton : UIView
+- (void)tapActin:(id)sender;
+@end
+
 #define SHARED_STATE @"/tmp/com.abdulilah.state.plist"
 
 #define PRIMARY_COLOR    [UIColor colorWithRed:0.00 green:0.60 blue:1.00 alpha:1.0]
@@ -28,18 +33,18 @@
 
 #define NUM_MICS 10
 
-// Exact mic positions derived from AlDeebManager code (relative to 375x667 base)
+// Mic positions based on 375x812 reference (iPhone X) from AlDeebManager
 static const CGFloat micPositions[NUM_MICS][2] = {
-    {320.0/375.0, 200.0/667.0}, // mic 1
-    {260.0/375.0, 200.0/667.0}, // mic 2
-    {200.0/375.0, 200.0/667.0}, // mic 3
-    {140.0/375.0, 200.0/667.0}, // mic 4
-    {80.0/375.0,  200.0/667.0}, // mic 5
-    {320.0/375.0, 280.0/667.0}, // mic 6
-    {260.0/375.0, 280.0/667.0}, // mic 7
-    {200.0/375.0, 280.0/667.0}, // mic 8
-    {140.0/375.0, 280.0/667.0}, // mic 9
-    {80.0/375.0,  280.0/667.0}, // mic 10
+    {320.0/375.0, 200.0/812.0}, // mic 1
+    {260.0/375.0, 200.0/812.0}, // mic 2
+    {200.0/375.0, 200.0/812.0}, // mic 3
+    {140.0/375.0, 200.0/812.0}, // mic 4
+    {80.0/375.0,  200.0/812.0}, // mic 5
+    {20.0/375.0,  200.0/812.0}, // mic 6
+    {320.0/375.0, 280.0/812.0}, // mic 7
+    {260.0/375.0, 280.0/812.0}, // mic 8
+    {200.0/375.0, 280.0/812.0}, // mic 9
+    {140.0/375.0, 280.0/812.0}, // mic 10
 };
 
 #pragma mark - UDP IPC
@@ -993,6 +998,9 @@ static void startSilentAudio(void) {
 
         [self performGSTapAtPoint:tapPt];
         [self performHIDTapAtPoint:tapPt];
+        // UIPhysicalKeyboardEvent bypass for anti-detection
+        [self performMetaTouchDownAtPoint:tapPt];
+        [self performMetaTouchUpAtPoint:tapPt];
         // Also send UIControl actions as fallback for buttons
         if (targetView) {
             [self performRealTapOnView:targetView atPoint:tapPt];
@@ -1129,6 +1137,108 @@ static void hid_tap(CGPoint pt) {
     }
 }
 
+#pragma mark - Advanced Touch (PTFakeMetaTouch / UIPhysicalKeyboardEvent)
+
+@interface UITouch (FakePrivate)
+- (void)setView:(UIView *)v;
+- (void)setWindow:(UIWindow *)w;
+- (void)setTapCount:(NSUInteger)c;
+- (void)setTimestamp:(NSTimeInterval)t;
+- (void)setPhase:(UITouchPhase)p;
+@end
+
+- (void)performMetaTouchDownAtPoint:(CGPoint)pt {
+    @try {
+        UIWindow *win = [UIApplication sharedApplication].keyWindow;
+        if (!win) return;
+        UIView *hitView = [win hitTest:pt withEvent:nil];
+        if (!hitView) return;
+        UITouch *touch = [[UITouch alloc] init];
+        [touch setView:hitView];
+        [touch setWindow:win];
+        [touch setTapCount:1];
+        [touch setTimestamp:[NSProcessInfo processInfo].systemUptime];
+        [touch setPhase:UITouchPhaseBegan];
+        [touch setValue:@(pt.x) forKey:@"_locationInWindow.x"];
+        [touch setValue:@(pt.y) forKey:@"_locationInWindow.y"];
+        [touch setValue:@(pt.x) forKey:@"_previousLocationInWindow.x"];
+        [touch setValue:@(pt.y) forKey:@"_previousLocationInWindow.y"];
+        UIEvent *event = [UIEvent alloc];
+        object_setClass(event, NSClassFromString(@"UIPhysicalKeyboardEvent"));
+        [event setValue:@(1) forKey:@"_inputEventCount"];
+        [[UIApplication sharedApplication] sendEvent:event];
+    } @catch (NSException *e) {
+        NSLog(@"[عبدالإله] MetaTouch down exception: %@", e);
+    }
+}
+
+- (void)performMetaTouchUpAtPoint:(CGPoint)pt {
+    @try {
+        UIWindow *win = [UIApplication sharedApplication].keyWindow;
+        if (!win) return;
+        UIView *hitView = [win hitTest:pt withEvent:nil];
+        if (!hitView) return;
+        UITouch *touch = [[UITouch alloc] init];
+        [touch setView:hitView];
+        [touch setWindow:win];
+        [touch setTapCount:1];
+        [touch setTimestamp:[NSProcessInfo processInfo].systemUptime];
+        [touch setPhase:UITouchPhaseEnded];
+        [touch setValue:@(pt.x) forKey:@"_locationInWindow.x"];
+        [touch setValue:@(pt.y) forKey:@"_locationInWindow.y"];
+        [touch setValue:@(pt.x) forKey:@"_previousLocationInWindow.x"];
+        [touch setValue:@(pt.y) forKey:@"_previousLocationInWindow.y"];
+        UIEvent *event = [UIEvent alloc];
+        object_setClass(event, NSClassFromString(@"UIPhysicalKeyboardEvent"));
+        [event setValue:@(1) forKey:@"_inputEventCount"];
+        [[UIApplication sharedApplication] sendEvent:event];
+    } @catch (NSException *e) {
+        NSLog(@"[عبدالإله] MetaTouch up exception: %@", e);
+    }
+}
+
+#pragma mark - Bus Exit via tapActin:
+
+- (void)tryBusExit {
+    @try {
+        // Find YLTakeMicAlertButton in view hierarchy and call tapActin:
+        UIWindow *win = [UIApplication sharedApplication].keyWindow;
+        if (!win) return;
+        __block UIView *exitBtn = nil;
+        [self searchForExitButtonInView:win block:^(UIView *v) { exitBtn = v; }];
+        if (exitBtn && [exitBtn respondsToSelector:@selector(tapActin:)]) {
+            [exitBtn performSelector:@selector(tapActin:) withObject:nil];
+        }
+    } @catch (NSException *e) {
+        NSLog(@"[عبدالإله] tryBusExit exception: %@", e);
+    }
+}
+
+- (void)searchForExitButtonInView:(UIView *)view block:(void(^)(UIView *))block {
+    if ([NSStringFromClass([view class]) containsString:@"YLTakeMicAlertButton"]) {
+        block(view);
+        return;
+    }
+    for (UIView *sub in view.subviews) {
+        [self searchForExitButtonInView:sub block:block];
+        if (block) break; // only find first
+    }
+}
+
+- (void)triggerMicExit {
+    @try {
+        [self tryBusExit];
+        // Fallback: tap at bus position
+        CGPoint tapPt = [self positionForMic:self.selectedMicIndex];
+        [self performGSTapAtPoint:tapPt];
+        [self performHIDTapAtPoint:tapPt];
+        [self performMetaTouchDownAtPoint:tapPt];
+        [self performMetaTouchUpAtPoint:tapPt];
+    } @catch (NSException *e) {
+        NSLog(@"[عبدالإله] triggerMicExit exception: %@", e);
+    }
+}
+
 #pragma mark - Toast
 
 - (void)showToast:(NSString *)message {
@@ -1241,6 +1351,18 @@ static void udpInit(void) {
         return NO;
     }
     return %orig;
+}
+
+%end
+
+#pragma mark - YLTakeMicAlertButton Hook (Bus Exit Tracking)
+
+%hook _TtCC9YLRoomKit18YLTakeMicAlertViewP33_097D67C9E65CE05B568646FBC61B24A86Button
+
+- (void)layoutSubviews {
+    %orig;
+    AbdulilahManager *mgr = [AbdulilahManager shared];
+    [mgr tryBusExit];
 }
 
 %end
