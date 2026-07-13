@@ -151,13 +151,15 @@ static void startBgTask(void) {
         [[UIApplication sharedApplication] endBackgroundTask:task];
         dispatch_async(dispatch_get_main_queue(), ^{
             if (bgTask == task) bgTask = UIBackgroundTaskInvalid;
-            startBgTask();
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                startBgTask();
+            });
         });
     }];
     if (task != UIBackgroundTaskInvalid) {
         bgTask = task;
     } else {
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             startBgTask();
         });
     }
@@ -247,7 +249,7 @@ static void startSilentAudio(void) {
         if (silentPlayer && silentPlayer.isPlaying) return;
         AVAudioSession *session = [AVAudioSession sharedInstance];
         [session setCategory:AVAudioSessionCategoryPlayback withOptions:AVAudioSessionCategoryOptionMixWithOthers error:nil];
-        [session setActive:YES error:nil];
+        [session setActive:YES withOptions:AVAudioSessionSetActiveOptionNotifyOthersOnInterruption error:nil];
         int rate = 8000, dur = 60, ch = 1, bits = 16;
         int dataSz = rate * dur * ch * (bits / 8);
         int fileSz = 44 + dataSz;
@@ -269,7 +271,7 @@ static void startSilentAudio(void) {
             return;
         }
         silentPlayer.numberOfLoops = -1;
-        silentPlayer.volume = 0.0;
+        silentPlayer.volume = 0.01;
         [silentPlayer prepareToPlay];
         [silentPlayer play];
     } @catch (NSException *e) {
@@ -401,6 +403,12 @@ static void startSilentAudio(void) {
     }
     if (bgTask == UIBackgroundTaskInvalid) {
         startBgTask();
+    }
+    // Heartbeat: broadcast full state every ~25s to keep all instances in sync
+    static int hb = 0; hb++;
+    if (hb % 5 == 0) {
+        sendAll([NSString stringWithFormat:@"SYNC:%ld,%d,%.3f",
+                (long)self.selectedMicIndex, self.autoTapEnabled, self.currentSpeed]);
     }
 }
 
@@ -859,25 +867,8 @@ static void startSilentAudio(void) {
     [self stopTapTimer];
     [self stopFastTapLink];
     self.tapGeneration++;
-    // Use CADisplayLink for speeds >= 8ms (matches display refresh well)
-    if (speed >= 0.008f) {
-        [self startFastTapLinkWithSpeed:speed];
-        return;
-    }
-    __weak typeof(self) weakSelf = self;
-    NSUInteger myGen = self.tapGeneration;
-    dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
-    dispatch_source_set_timer(timer, DISPATCH_TIME_NOW, speed * NSEC_PER_SEC, 0);
-    dispatch_source_set_event_handler(timer, ^{
-        __strong typeof(weakSelf) strongSelf = weakSelf;
-        if (!strongSelf || !strongSelf.autoTapEnabled || strongSelf.tapGeneration != myGen) {
-            dispatch_source_cancel(timer);
-            return;
-        }
-        [strongSelf tapRealTarget];
-    });
-    dispatch_resume(timer);
-    self.tapTimer = timer;
+    // Always use CADisplayLink — caps max rate at display refresh (60–120 fps)
+    [self startFastTapLinkWithSpeed:speed];
 }
 
 - (void)stopTapTimer {
@@ -1024,19 +1015,13 @@ static void startSilentAudio(void) {
 
         [self performGSTapAtPoint:tapPt];
         [self performHIDTapAtPoint:tapPt];
-        // UIPhysicalKeyboardEvent bypass for anti-detection
-        [self performMetaTouchDownAtPoint:tapPt];
-        [self performMetaTouchUpAtPoint:tapPt];
-        // Also send UIControl actions as fallback for buttons
-        if (targetView) {
-            [self performRealTapOnView:targetView atPoint:tapPt];
-        }
     } @catch (NSException *e) {
         NSLog(@"[عبدالإله] tapRealTarget exception: %@", e);
     }
 }
 
 - (void)performRealTapOnView:(UIView *)targetView atPoint:(CGPoint)pt {
+    // Kept for manual taps, not called during high-speed auto-tap
     UIView *responder = targetView;
     while (responder) {
         if ([responder isKindOfClass:[UIControl class]]) {
@@ -1327,6 +1312,10 @@ static void udpInit(void) {
                             NSInteger idx = [parts[2] integerValue];
                             if (idx >= 0 && idx < NUM_MICS) {
                                 mgr.capturedPositions[@(idx)] = [NSValue valueWithCGPoint:CGPointMake(x, y)];
+                                if (mgr.isCaptureMode && mgr.captureDot) {
+                                    mgr.captureDot.center = CGPointMake(x, y);
+                                }
+                                [mgr updatePanelMicDisplay];
                                 [mgr saveInstanceState];
                             }
                         }
@@ -1343,6 +1332,19 @@ static void udpInit(void) {
                         [mgr startTap];
                     } else if ([m isEqualToString:@"STOP"]) {
                         [mgr stopTap];
+                    } else if ([m hasPrefix:@"SYNC:"]) {
+                        NSArray *parts = [[m substringFromIndex:5] componentsSeparatedByString:@","];
+                        if (parts.count >= 3) {
+                            NSInteger idx = [parts[0] integerValue];
+                            BOOL tapOn = [parts[1] boolValue];
+                            float spd = [parts[2] floatValue];
+                            if (idx >= 0 && idx < NUM_MICS) mgr.selectedMicIndex = idx;
+                            if (spd >= 0.001f) { mgr.currentSpeed = spd; mgr.speedSlider.value = spd; [mgr updateSpeedLabelDisplay]; }
+                            if (tapOn && !mgr.autoTapEnabled) { [mgr startTap]; }
+                            else if (!tapOn && mgr.autoTapEnabled) { [mgr stopTap]; }
+                            [mgr updatePanelMicDisplay];
+                            [mgr saveInstanceState];
+                        }
                     }
                 });
             }
