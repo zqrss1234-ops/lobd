@@ -26,14 +26,15 @@ jobs:
 
       - name: Debug Theos
         run: |
+          echo "HOME=$HOME"
           echo "THEOS=$THEOS"
-          ls -la $THEOS/makefiles/
-          ls -la $THEOS/vendor/
-          make --version | head -1
+          ls -la "$THEOS/makefiles/" || echo "No makefiles dir at $THEOS/makefiles/"
+          ls -la "$THEOS/vendor/" || echo "No vendor dir at $THEOS/vendor/"
+          which make
+          make --version
 
       - name: Build Package
-        run: |
-          make package 2>&1
+        run: make package 2>&1
 
       - name: Upload .deb
         uses: actions/upload-artifact@v4
