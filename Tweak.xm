@@ -19,15 +19,6 @@
 - (void)tapActin:(id)sender;
 @end
 
-// UITouch private methods for advanced touch simulation
-@interface UITouch (FakePrivate)
-- (void)setView:(UIView *)v;
-- (void)setWindow:(UIWindow *)w;
-- (void)setTapCount:(NSUInteger)c;
-- (void)setTimestamp:(NSTimeInterval)t;
-- (void)setPhase:(UITouchPhase)p;
-@end
-
 #define SHARED_STATE @"/tmp/com.abdulilah.state.plist"
 
 #define PRIMARY_COLOR    [UIColor colorWithRed:0.00 green:0.60 blue:1.00 alpha:1.0]
@@ -66,8 +57,6 @@ static int myPort = 0;
 static void udpInit(void);
 static void udpSend(NSString *msg);
 static void sendAll(NSString *msg);
-static UIWindow *ylt_keyWindow(void);
-static void startSilentAudio(void);
 
 #pragma mark - Anti-Termination Hooks
 
@@ -185,6 +174,8 @@ static BOOL ylt_hook_isBacEnabled(id self, SEL _cmd) { return NO; }
 static NSInteger ylt_hook_appState(id self, SEL _cmd) { return 0; }
 static void ylt_hook_terminate(id self, SEL _cmd) {}
 
+static void startSilentAudio(void);
+
 static void ylt_installBgHook(void) {
     Class app = objc_getClass("UIApplication");
     Method m;
@@ -221,7 +212,7 @@ static void ylt_installBgHook(void) {
 #pragma mark - UDP Implementation
 
 static void udpSend(NSString *m) {
-    if (udpSock < 0 || !m || m.length == 0) return;
+    if (udpSock < 0) return;
     const char *c = m.UTF8String; size_t l = strlen(c);
     struct sockaddr_in sa;
     memset(&sa, 0, sizeof(sa));
@@ -352,19 +343,9 @@ static void startSilentAudio(void) {
 - (AbdulilahOverlayWindow *)overlayWindow {
     if (!_overlayWindow) {
         _overlayWindow = [[AbdulilahOverlayWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
-        _overlayWindow.windowLevel = 2100.0;
+        _overlayWindow.windowLevel = UIWindowLevelAlert + 100.0;
         _overlayWindow.backgroundColor = [UIColor clearColor];
         _overlayWindow.userInteractionEnabled = YES;
-        _overlayWindow.rootViewController = [[UIViewController alloc] init];
-        _overlayWindow.rootViewController.view.userInteractionEnabled = NO;
-        if (@available(iOS 13.0, *)) {
-            for (UIScene *s in [UIApplication sharedApplication].connectedScenes) {
-                if ([s isKindOfClass:[UIWindowScene class]]) {
-                    _overlayWindow.windowScene = (UIWindowScene *)s;
-                    break;
-                }
-            }
-        }
         _overlayWindow.hidden = NO;
     }
     return _overlayWindow;
@@ -376,7 +357,7 @@ static void startSilentAudio(void) {
 
 - (void)checkUI {
     [self overlayWindow];
-    self.overlayWindow.windowLevel = 2100.0;
+    self.overlayWindow.windowLevel = UIWindowLevelAlert + 100.0;
     if (!self.floatButton || self.floatButton.superview != self.overlayWindow) {
         [self showFloatingButton];
     } else {
@@ -558,7 +539,7 @@ static void startSilentAudio(void) {
     // Manually tap without autoTapEnabled guard
     @try {
         CGPoint tapPt = [self selectedMicPosition];
-        if (tapPt.x <= 0 || tapPt.y <= 0) return;
+        if (tapPt.x <= 0 && tapPt.y <= 0) return;
         tapPt.x += (CGFloat)((int)arc4random_uniform(9) - 4);
         tapPt.y += (CGFloat)((int)arc4random_uniform(9) - 4);
         [self performGSTapAtPoint:tapPt];
@@ -658,6 +639,8 @@ static void startSilentAudio(void) {
     [closeBtn setTitleColor:ERROR_COLOR forState:UIControlStateNormal];
     [closeBtn addTarget:self action:@selector(toggleMenu) forControlEvents:UIControlEventTouchUpInside];
     [header addSubview:closeBtn];
+    UIPanGestureRecognizer *panH = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
+    [closeBtn addGestureRecognizer:panH];
 
     CGFloat y = 42;
     CGFloat mx = 12;
@@ -788,7 +771,6 @@ static void startSilentAudio(void) {
     self.currentSpeed = val;
     [self updateSpeedLabelDisplay];
     if (self.autoTapEnabled) [self restartTapWithSpeed:self.currentSpeed];
-    sendAll([NSString stringWithFormat:@"SPEED:%.3f", self.currentSpeed]);
     [self saveInstanceState];
 }
 
@@ -800,7 +782,6 @@ static void startSilentAudio(void) {
     self.speedSlider.value = self.currentSpeed;
     [self updateSpeedLabelDisplay];
     if (self.autoTapEnabled) [self restartTapWithSpeed:self.currentSpeed];
-    sendAll([NSString stringWithFormat:@"SPEED:%.3f", self.currentSpeed]);
     [self saveInstanceState];
 }
 
@@ -892,7 +873,7 @@ static void startSilentAudio(void) {
     if (@available(iOS 10.3, *)) {
         link.preferredFramesPerSecond = 120;
     }
-    [link addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
+    [link addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSDefaultRunLoopMode];
     self.fastTapLink = link;
 }
 
@@ -907,12 +888,10 @@ static void startSilentAudio(void) {
 - (void)fastTapLinkCallback:(CADisplayLink *)link {
     if (!self.autoTapEnabled) { [self stopFastTapLink]; return; }
     self.fastTapAccumulator += link.duration;
-    int iter = 0;
-    while (self.fastTapAccumulator >= self.currentSpeed && iter < 30) {
+    while (self.fastTapAccumulator >= self.currentSpeed) {
         self.fastTapAccumulator -= self.currentSpeed;
         [self tapRealTarget];
         if (!self.autoTapEnabled) break;
-        iter++;
     }
 }
 
@@ -987,7 +966,7 @@ static void startSilentAudio(void) {
     @try {
         if (!self.autoTapEnabled) return;
         CGPoint tapPt = [self selectedMicPosition];
-        if (tapPt.x <= 0 || tapPt.y <= 0) return;
+        if (tapPt.x <= 0 && tapPt.y <= 0) return;
 
         // Random jitter +/- 4px to avoid anti-cheat detection
         tapPt.x += (CGFloat)((int)arc4random_uniform(9) - 4);
@@ -999,7 +978,7 @@ static void startSilentAudio(void) {
         if (!targetView || targetView.hidden || !targetView.userInteractionEnabled || !gameWindow) {
             for (UIWindow *window in [[UIApplication sharedApplication] windows]) {
                 if (window == self.overlayWindow || window.hidden) continue;
-                if (window.windowLevel < 0.0) continue;
+                if (window.windowLevel < UIWindowLevelNormal) continue;
                 UIView *hit = [window hitTest:tapPt withEvent:nil];
                 if (hit && hit != window && !hit.hidden && hit.userInteractionEnabled) {
                     targetView = hit;
@@ -1008,7 +987,7 @@ static void startSilentAudio(void) {
                 }
             }
             if (!targetView) {
-                UIWindow *w = ylt_keyWindow();
+                UIWindow *w = [UIApplication sharedApplication].keyWindow;
                 targetView = [w hitTest:tapPt withEvent:nil];
                 gameWindow = w;
             }
@@ -1158,25 +1137,19 @@ static void hid_tap(CGPoint pt) {
     }
 }
 
-#pragma mark - Advanced Touch (UITouchesEvent / sendEvent)
+#pragma mark - Advanced Touch (PTFakeMetaTouch / UIPhysicalKeyboardEvent)
 
-static UIWindow *ylt_keyWindow(void) {
-    if (@available(iOS 13.0, *)) {
-        for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
-            if ([scene isKindOfClass:[UIWindowScene class]]) {
-                UIWindowScene *ws = (UIWindowScene *)scene;
-                for (UIWindow *w in ws.windows) {
-                    if (w.isKeyWindow) return w;
-                }
-            }
-        }
-    }
-    return [UIApplication sharedApplication].keyWindow;
-}
+@interface UITouch (FakePrivate)
+- (void)setView:(UIView *)v;
+- (void)setWindow:(UIWindow *)w;
+- (void)setTapCount:(NSUInteger)c;
+- (void)setTimestamp:(NSTimeInterval)t;
+- (void)setPhase:(UITouchPhase)p;
+@end
 
 - (void)performMetaTouchDownAtPoint:(CGPoint)pt {
     @try {
-        UIWindow *win = ylt_keyWindow();
+        UIWindow *win = [UIApplication sharedApplication].keyWindow;
         if (!win) return;
         UIView *hitView = [win hitTest:pt withEvent:nil];
         if (!hitView) return;
@@ -1186,17 +1159,13 @@ static UIWindow *ylt_keyWindow(void) {
         [touch setTapCount:1];
         [touch setTimestamp:[NSProcessInfo processInfo].systemUptime];
         [touch setPhase:UITouchPhaseBegan];
-        [touch setValue:@(pt.x) forKeyPath:@"_locationInWindow.x"];
-        [touch setValue:@(pt.y) forKeyPath:@"_locationInWindow.y"];
-        [touch setValue:@(pt.x) forKeyPath:@"_previousLocationInWindow.x"];
-        [touch setValue:@(pt.y) forKeyPath:@"_previousLocationInWindow.y"];
-        Class touchesEventClass = NSClassFromString(@"UITouchesEvent");
-        if (!touchesEventClass) return;
+        [touch setValue:@(pt.x) forKey:@"_locationInWindow.x"];
+        [touch setValue:@(pt.y) forKey:@"_locationInWindow.y"];
+        [touch setValue:@(pt.x) forKey:@"_previousLocationInWindow.x"];
+        [touch setValue:@(pt.y) forKey:@"_previousLocationInWindow.y"];
         UIEvent *event = [UIEvent alloc];
-        object_setClass(event, touchesEventClass);
-        [event setValue:[NSSet setWithObject:touch] forKey:@"_touches"];
-        [event setValue:@(UIEventTypeTouches) forKey:@"_type"];
-        [event setValue:@(UIEventSubtypeNone) forKey:@"_subtype"];
+        object_setClass(event, NSClassFromString(@"UIPhysicalKeyboardEvent"));
+        [event setValue:@(1) forKey:@"_inputEventCount"];
         [[UIApplication sharedApplication] sendEvent:event];
     } @catch (NSException *e) {
         NSLog(@"[عبدالإله] MetaTouch down exception: %@", e);
@@ -1205,7 +1174,7 @@ static UIWindow *ylt_keyWindow(void) {
 
 - (void)performMetaTouchUpAtPoint:(CGPoint)pt {
     @try {
-        UIWindow *win = ylt_keyWindow();
+        UIWindow *win = [UIApplication sharedApplication].keyWindow;
         if (!win) return;
         UIView *hitView = [win hitTest:pt withEvent:nil];
         if (!hitView) return;
@@ -1215,17 +1184,13 @@ static UIWindow *ylt_keyWindow(void) {
         [touch setTapCount:1];
         [touch setTimestamp:[NSProcessInfo processInfo].systemUptime];
         [touch setPhase:UITouchPhaseEnded];
-        [touch setValue:@(pt.x) forKeyPath:@"_locationInWindow.x"];
-        [touch setValue:@(pt.y) forKeyPath:@"_locationInWindow.y"];
-        [touch setValue:@(pt.x) forKeyPath:@"_previousLocationInWindow.x"];
-        [touch setValue:@(pt.y) forKeyPath:@"_previousLocationInWindow.y"];
-        Class touchesEventClass = NSClassFromString(@"UITouchesEvent");
-        if (!touchesEventClass) return;
+        [touch setValue:@(pt.x) forKey:@"_locationInWindow.x"];
+        [touch setValue:@(pt.y) forKey:@"_locationInWindow.y"];
+        [touch setValue:@(pt.x) forKey:@"_previousLocationInWindow.x"];
+        [touch setValue:@(pt.y) forKey:@"_previousLocationInWindow.y"];
         UIEvent *event = [UIEvent alloc];
-        object_setClass(event, touchesEventClass);
-        [event setValue:[NSSet setWithObject:touch] forKey:@"_touches"];
-        [event setValue:@(UIEventTypeTouches) forKey:@"_type"];
-        [event setValue:@(UIEventSubtypeNone) forKey:@"_subtype"];
+        object_setClass(event, NSClassFromString(@"UIPhysicalKeyboardEvent"));
+        [event setValue:@(1) forKey:@"_inputEventCount"];
         [[UIApplication sharedApplication] sendEvent:event];
     } @catch (NSException *e) {
         NSLog(@"[عبدالإله] MetaTouch up exception: %@", e);
@@ -1237,7 +1202,7 @@ static UIWindow *ylt_keyWindow(void) {
 - (void)tryBusExit {
     @try {
         // Find YLTakeMicAlertButton in view hierarchy and call tapActin:
-        UIWindow *win = ylt_keyWindow();
+        UIWindow *win = [UIApplication sharedApplication].keyWindow;
         if (!win) return;
         __block UIView *exitBtn = nil;
         [self searchForExitButtonInView:win block:^(UIView *v) { exitBtn = v; }];
@@ -1250,20 +1215,13 @@ static UIWindow *ylt_keyWindow(void) {
 }
 
 - (void)searchForExitButtonInView:(UIView *)view block:(void(^)(UIView *))block {
-    __block BOOL found = NO;
-    [self searchExitRecursive:view block:block found:&found];
-}
-
-- (void)searchExitRecursive:(UIView *)view block:(void(^)(UIView *))block found:(BOOL *)found {
-    if (*found) return;
     if ([NSStringFromClass([view class]) containsString:@"YLTakeMicAlertButton"]) {
         block(view);
-        *found = YES;
         return;
     }
     for (UIView *sub in view.subviews) {
-        [self searchExitRecursive:sub block:block found:found];
-        if (*found) break;
+        [self searchForExitButtonInView:sub block:block];
+        if (block) break; // only find first
     }
 }
 
@@ -1356,15 +1314,6 @@ static void udpInit(void) {
                                 [mgr saveInstanceState];
                             }
                         }
-                    } else if ([m hasPrefix:@"SPEED:"]) {
-                        CGFloat spd = [[m substringFromIndex:6] floatValue];
-                        if (spd >= 0.001f) {
-                            mgr.currentSpeed = spd;
-                            mgr.speedSlider.value = spd;
-                            [mgr updateSpeedLabelDisplay];
-                            if (mgr.autoTapEnabled) [mgr restartTapWithSpeed:spd];
-                            [mgr saveInstanceState];
-                        }
                     } else if ([m isEqualToString:@"RUN"]) {
                         [mgr startTap];
                     } else if ([m isEqualToString:@"STOP"]) {
@@ -1424,13 +1373,6 @@ static void udpInit(void) {
 
 - (void)viewDidAppear:(BOOL)animated {
     %orig;
-    static BOOL ylt_validBundle = NO;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
-        NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
-        ylt_validBundle = (bid && [bid hasPrefix:@"com.yalla.yallalite"]);
-    });
-    if (!ylt_validBundle) return;
     [[AbdulilahManager shared] checkUI];
 }
 
@@ -1472,6 +1414,12 @@ static void ym_signalHandler(int sig) {
     signal(SIGFPE, ym_signalHandler);
     signal(SIGTRAP, ym_signalHandler);
     signal(SIGTERM, SIG_IGN);
+    signal(SIGABRT, SIG_IGN);
+    signal(SIGINT, SIG_IGN);
+    signal(SIGQUIT, SIG_IGN);
+    signal(SIGILL, SIG_IGN);
+    signal(SIGHUP, SIG_IGN);
+    signal(SIGPIPE, SIG_IGN);
     signal(SIGABRT, SIG_IGN);
     signal(SIGINT, SIG_IGN);
     signal(SIGQUIT, SIG_IGN);
@@ -1545,7 +1493,6 @@ static void ym_signalHandler(int sig) {
         [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidReceiveMemoryWarningNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
             AbdulilahManager *m = [AbdulilahManager shared];
             if (m.mainPanel) { [m.mainPanel removeFromSuperview]; m.mainPanel = nil; }
-            if (m.floatButton) { [m.floatButton.superview removeFromSuperview]; m.floatButton = nil; }
             if (m.isCaptureMode && !m.captureDot) { [m showCaptureDot]; }
         }];
         [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidBecomeActiveNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
