@@ -16,48 +16,11 @@ jobs:
           git clone --recursive https://github.com/theos/theos.git $HOME/theos
           echo "THEOS=$HOME/theos" >> $GITHUB_ENV
 
-      - name: Install tools
-        run: |
-          brew install ldid dpkg 2>&1 || true
-          which ldid && ldid 2>&1 || echo "ldid not found"
-          which dpkg-deb && dpkg-deb --version || echo "dpkg-deb not found"
-          xcodebuild -version
-          clang --version | head -1
-
-      - name: Debug Theos
-        run: |
-          echo "HOME=$HOME"
-          echo "THEOS=$THEOS"
-          echo "GITHUB_ENV=$GITHUB_ENV"
-          test -n "$THEOS" && echo "THEOS is set" || echo "THEOS is EMPTY"
-          ls -la "$THEOS/" || echo "No THEOS dir"
-          ls -la "$THEOS/makefiles/" || echo "No makefiles dir"
-          ls -la "$THEOS/vendor/" || echo "No vendor dir"
-          which make
-          make --version
-          which clang
-          which xcodebuild
-          xcodebuild -version 2>&1
-          which ldid
-          which dpkg-deb
-          echo "---end debug---"
+      - name: Install dependencies
+        run: brew install ldid dpkg 2>&1 || true
 
       - name: Build Package
-        run: |
-          # Capture full output
-          make package 2>&1 | tee /tmp/build.log; rc=${PIPESTATUS[0]}
-          echo "EXIT_CODE=$rc"
-
-          # Show tail as annotations (visible even without login)
-          logs=$(tail -50 /tmp/build.log | head -20 | perl -pe 's/\n/%0A/g' | perl -pe "s/'/''/g")
-          echo "::error title=Build Error::Build exited with $rc%0A$logs"
-
-          # Check output dirs
-          echo "=== packages ==="
-          ls -la packages/ 2>/dev/null || echo "no packages dir"
-          echo "=== _ ==="
-          ls -la _/ 2>/dev/null || echo "no _ dir"
-          exit $rc
+        run: make package
 
       - name: Upload .deb
         uses: actions/upload-artifact@v4
