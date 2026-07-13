@@ -19,6 +19,15 @@
 - (void)tapActin:(id)sender;
 @end
 
+static inline UIWindow *ylt_keyWindow(void) {
+    for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+        if (scene.activationState == UISceneActivationStateForegroundActive) {
+            return [(UIWindowScene *)scene windows].firstObject;
+        }
+    }
+    return nil;
+}
+
 #define SHARED_STATE @"/tmp/com.abdulilah.state.plist"
 
 #define PRIMARY_COLOR    [UIColor colorWithRed:0.00 green:0.60 blue:1.00 alpha:1.0]
@@ -999,7 +1008,7 @@ static void startSilentAudio(void) {
                 }
             }
             if (!targetView) {
-                UIWindow *w = [UIApplication sharedApplication].keyWindow;
+                UIWindow *w = ylt_keyWindow();
                 targetView = [w hitTest:tapPt withEvent:nil];
                 gameWindow = w;
             }
@@ -1151,7 +1160,7 @@ static void hid_tap(CGPoint pt) {
 
 - (void)performMetaTouchDownAtPoint:(CGPoint)pt {
     @try {
-        UIWindow *win = [UIApplication sharedApplication].keyWindow;
+        UIWindow *win = ylt_keyWindow();
         if (!win) return;
         UIView *hitView = [win hitTest:pt withEvent:nil];
         if (!hitView) return;
@@ -1176,7 +1185,7 @@ static void hid_tap(CGPoint pt) {
 
 - (void)performMetaTouchUpAtPoint:(CGPoint)pt {
     @try {
-        UIWindow *win = [UIApplication sharedApplication].keyWindow;
+        UIWindow *win = ylt_keyWindow();
         if (!win) return;
         UIView *hitView = [win hitTest:pt withEvent:nil];
         if (!hitView) return;
@@ -1204,7 +1213,7 @@ static void hid_tap(CGPoint pt) {
 - (void)tryBusExit {
     @try {
         // Find YLTakeMicAlertButton in view hierarchy and call tapActin:
-        UIWindow *win = [UIApplication sharedApplication].keyWindow;
+        UIWindow *win = ylt_keyWindow();
         if (!win) return;
         __block UIView *exitBtn = nil;
         [self searchForExitButtonInView:win block:^(UIView *v) { exitBtn = v; }];
