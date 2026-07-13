@@ -17,10 +17,12 @@ jobs:
           echo "THEOS=$HOME/theos" >> $GITHUB_ENV
 
       - name: Install ldid
-        run: brew install ldid
+        run: brew install ldid dpkg
 
       - name: Build Package
-        run: make package
+        run: make clean package
+        env:
+          THEOS_VERBOSE: 1
 
       - name: Upload .deb
         uses: actions/upload-artifact@v4
